@@ -1,5 +1,5 @@
 """
-TeraAg — Monitor do crédito privado agro (MVP)
+Monitor do crédito privado agro (MVP)
 
 Lê a planilha carteira_ativos.xlsx do repositório (ou uma planilha enviada pela barra lateral)
 e mostra as carteiras dos fundos: volumes, taxas praticadas, concentração por devedor,
