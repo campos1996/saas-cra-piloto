@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="Monitor de Crédito Privado - CRA", layout="wide")
-st.title("📊 Monitor de Ativos de Crédito Privado (CRA)")
+st.title("📊 Monitor de Crédito - CRA ")
 st.write("Painel conectado à base de dados em Excel.")
 
 # Função para carregar os dados direto da planilha Excel no GitHub
