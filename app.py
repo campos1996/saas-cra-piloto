@@ -3,25 +3,27 @@ import pandas as pd
 
 st.set_page_config(page_title="Monitor de Crédito Privado - CRA", layout="wide")
 st.title("📊 Monitor de Ativos de Crédito Privado (CRA)")
-st.write("Painel protótipo para acompanhamento de carteira de ativos.")
+st.write("Painel conectado à base de dados em Excel.")
 
-# Exemplo de dados manuais baseado nos relatórios
-dados_exemplo = {
-    'Fundo': ['Fundo Exemplo', 'Fundo Exemplo', 'Fundo Exemplo'],
-    'Ativo': ['CRA Fiagril VI', 'CRA Languiru', 'CRA Irmãos Walker'],
-    'Emissor': ['Província', 'Opea', 'Opea'],
-    'Segmento': ['Distribuidora', 'Cooperativa', 'Produtores'],
-    'Valor': [99076894.41, 63837265.00, 53305877.52],
-    'Coupon': [3.80, 6.75, 5.00],
-    'Duration': [1.5, 4.6, 2.9]
-}
-df = pd.DataFrame(dados_exemplo)
+# Função para carregar os dados direto da planilha Excel no GitHub
+@st.cache_data
+def carregar_dados():
+    # O Pandas lê o arquivo que está na mesma pasta do repositório
+    df = pd.read_excel("carteira_ativos.xlsx")
+    return df
 
-# Métricas principais (KPIs)
-col1, col2, col3 = st.columns(3)
-col1.metric("Valor Total Alocado", f"R$ {df['Valor'].sum():,.2f}")
-col2.metric("Quantidade de Ativos", len(df))
-col3.metric("Coupon Médio", f"{df['Coupon'].mean():,.2f}% a.a.")
+# Tentamos carregar os dados
+try:
+    df = carregar_dados()
 
-# Tabela interativa na tela
-st.dataframe(df, use_container_width=True)
+    # Métricas principais calculadas automaticamente com os dados reais
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Valor Total Alocado", f"R$ {df['Valor'].sum():,.2f}")
+    col2.metric("Quantidade de Ativos", len(df))
+    col3.metric("Coupon Médio", f"{df['Coupon'].mean():,.2f}% a.a.")
+
+    # Tabela interativa com os dados reais da planilha
+    st.dataframe(df, use_container_width=True)
+
+except FileNotFoundError:
+    st.error("⚠️ O arquivo 'carteira_ativos.xlsx' não foi encontrado no repositório do GitHub. Por favor, faça o upload dele.")
