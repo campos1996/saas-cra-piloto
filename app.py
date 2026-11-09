@@ -207,6 +207,8 @@ def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     else:
         df["Taxa"] = np.nan
     df.loc[df["Indexador"] == "Sem indexador", "Taxa"] = np.nan
+    # "CDI" com taxa acima de 30 é percentual do CDI (ex.: 104% do CDI), não spread
+    df.loc[(df["Indexador"] == "CDI+") & (df["Taxa"] > 30), "Indexador"] = "%CDI"
     df["Instrumento"] = df["Ativo"].map(instrumento_de)
     df["Devedor"] = df["Ativo"].map(devedor_de)
     df["Segmento"] = bruto[mp["segmento"]].astype(str).str.strip() if "segmento" in mp else ""
@@ -230,6 +232,39 @@ def dispersao(d: pd.DataFrame, por: str) -> pd.DataFrame:
         out.append({por: g, "Ativos": len(x), "Volume": x["Valor"].sum(), "Mínimo": x["Taxa"].min(), "Média ponderada": media_pond(x),
                     "Mediana": x["Taxa"].median(), "Máximo": x["Taxa"].max()})
     return pd.DataFrame(out).sort_values("Volume", ascending=False) if out else pd.DataFrame()
+
+
+def operacoes(d: pd.DataFrame) -> pd.DataFrame:
+    """Agrupa o mesmo ativo em todos os fundos: pelo código; sem código, pelo nome normalizado."""
+    x = d.copy()
+    x["Chave"] = np.where(x["Codigo"].astype(str).str.len() > 3, x["Codigo"].astype(str).str.upper(), x["Ativo"].map(norm))
+    linhas = []
+    for k, g in x.groupby("Chave"):
+        idx = g.groupby("Indexador")["Valor"].sum().idxmax()
+        gi = g[g["Indexador"] == idx]
+        linhas.append({"Chave": k, "Ativo": g.loc[g["Valor"].idxmax(), "Ativo"], "Devedor": g["Devedor"].iloc[0], "Codigo": g["Codigo"].iloc[0],
+                       "Instrumento": g["Instrumento"].iloc[0], "Indexador": idx, "Taxa": media_pond(gi),
+                       "Volume": g["Valor"].sum(), "Nº fundos": g["Fundo"].nunique(), "Fundos": ", ".join(sorted(g["Fundo"].unique()))})
+    return pd.DataFrame(linhas)
+
+
+def rank_view(r: pd.DataFrame, total: float, curto=False) -> pd.DataFrame:
+    v = pd.DataFrame({"#": r["#"], "Operação": r["Ativo"], "Instrumento": r["Instrumento"],
+                      "Taxa": [taxa_txt(t, i) for t, i in zip(r["Taxa"], r["Indexador"])],
+                      "Volume": (r["Volume"] / 1e6).round(1), "% do total": (r["Volume"] / total * 100).round(2), "Fundos": r["Fundos"]})
+    if curto:
+        v = v.drop(columns=["Instrumento", "% do total", "Fundos"])
+    return v
+
+
+def RANK_CFG(total, vmax, idx=None):
+    return {
+        "#": st.column_config.NumberColumn("#", width="small"),
+        "Operação": st.column_config.TextColumn("Operação", width="medium"),
+        "Volume": st.column_config.ProgressColumn("Volume (R$ mi)", format="%.1f", min_value=0, max_value=float(vmax / 1e6)),
+        "% do total": st.column_config.NumberColumn("% do total", format="%.2f%%"),
+        "Fundos": st.column_config.TextColumn("Fundos", width="medium"),
+    }
 
 
 def hhi(valores: pd.Series) -> float:
@@ -403,16 +438,47 @@ with t1:
         mostrar(estilo(fig, max(220, 90 + 42 * df["Fundo"].nunique())))
         fonte()
 
-    legenda_fig(3, "Mapa das carteiras", "Área proporcional ao valor; cor pela taxa em CDI+ (cinza: outros indexadores)")
-    tm = df.copy()
-    tm["Taxa CDI+"] = np.where(tm["Indexador"] == "CDI+", tm["Taxa"], np.nan)
-    fig = px.treemap(tm, path=[px.Constant("Carteiras"), "Fundo", "Instrumento", "Devedor"], values="Valor", color="Taxa CDI+",
-                     color_continuous_scale=["#E4EDE8", MID, GREEN], custom_data=["Taxa CDI+"])
-    fig.update_traces(hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<extra></extra>", marker=dict(line=dict(color="white", width=1)),
-                      root_color="#F6F8F6")
-    fig.update_layout(coloraxis_colorbar=dict(title="CDI +", ticksuffix="%", thickness=10))
-    mostrar(estilo(fig, 520, legenda=False))
+    # ---------------- Principais operações: rankings por volume e por taxa ----------------
+    st.markdown('<div class="h2">Principais operações</div>', unsafe_allow_html=True)
+    st.markdown('<p class="note">Cada operação reúne o mesmo ativo em todos os fundos filtrados (pelo código; sem código, pelo nome). '
+                'Volume é a soma das posições; taxa é a média ponderada pelo volume.</p>', unsafe_allow_html=True)
+    ops = operacoes(df)
+    n_rank = st.select_slider("Tamanho dos rankings", options=[10, 15, 20, 30], value=15)
+
+    st.markdown(f'<div class="figt">Maiores operações por volume</div><div class="figs">Top {n_rank}, todas as taxas e indexadores</div>', unsafe_allow_html=True)
+    rv = ops.sort_values("Volume", ascending=False).head(n_rank).reset_index(drop=True)
+    rv.insert(0, "#", range(1, len(rv) + 1))
+    tabela(rank_view(rv, total), column_config=RANK_CFG(total, rv["Volume"].max()), height=38 + 35 * len(rv))
     fonte()
+
+    idx_rank = [i for i in ["CDI+", "IPCA+", "%CDI", "Pré"] if (ops["Indexador"] == i).any()]
+    if idx_rank:
+        ir = st.radio("Indexador dos rankings de taxa", idx_rank, horizontal=True)
+        base = ops[(ops["Indexador"] == ir) & ops["Taxa"].notna()]
+        c1, c2 = st.columns(2, gap="large")
+        for col, titulo, asc in [(c1, "Maiores taxas", False), (c2, "Menores taxas", True)]:
+            with col:
+                rt = base.sort_values(["Taxa", "Volume"], ascending=[asc, False]).head(n_rank).reset_index(drop=True)
+                rt.insert(0, "#", range(1, len(rt) + 1))
+                st.markdown(f'<div class="figt">{titulo} em {ir}</div><div class="figs">Top {min(n_rank, len(rt))} operações</div>', unsafe_allow_html=True)
+                tabela(rank_view(rt, total, curto=True), column_config=RANK_CFG(total, max(1, base["Volume"].max()), idx=ir), height=38 + 35 * len(rt))
+        fonte()
+
+        legenda_fig(3, f"Volume e taxa das operações em {ir}", "Cada ponto é uma operação; as 10 maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
+        sc = base.copy()
+        sc["mi"] = sc["Volume"] / 1e6
+        top = set(sc.nlargest(10, "Volume")["Chave"])
+        sc["rotulo"] = np.where(sc["Chave"].isin(top), sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True), "")
+        cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#6E7A72"}
+        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=40,
+                         custom_data=["Ativo", "Fundos", "Taxa", "mi"])
+        fig.update_traces(textposition="top center", textfont=dict(size=11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
+                          hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.1f} mi<extra></extra>")
+        fig.add_vline(x=float(sc["Taxa"].median()), line=dict(color=MUTED, width=1, dash="dash"))
+        fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
+        fig.update_yaxes(title="Volume (R$ milhões)")
+        mostrar(estilo(fig, 460))
+        fonte()
 
     if tem_venc and df["Vencimento"].notna().any():
         legenda_fig(4, "Vencimentos por ano", "R$ milhões")
