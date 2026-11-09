@@ -26,4 +26,4 @@ try:
     st.dataframe(df, use_container_width=True)
 
 except FileNotFoundError:
-    st.error("⚠️ O arquivo 'carteira_ativos.xlsx' não foi encontrado no repositório do GitHub. Por favor, faça o upload dele.")
+    st.error("⚠️ O arquivo 'carteira_ativos.csv' não foi encontrado no repositório do GitHub. Por favor, faça o upload dele.")
