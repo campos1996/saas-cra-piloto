@@ -19,23 +19,21 @@ def carregar_dados():
 try:
   df = carregar_dados()
 
-  # Verifica se o arquivo Excel está vazio ou sem as colunas principais
   if df.empty or "Valor" not in df.columns or "Fundo" not in df.columns:
     st.warning(
         "⚠️ O seu arquivo 'carteira_ativos.xlsx' está vazio ou sem as colunas"
-        " corretas ('Fundo', 'Ativo', 'Valor', etc.). Verifique a planilha."
+        " corretas ('Fundo', 'Ativo', 'Valor', etc.)."
     )
   else:
-    # Tratamento de dados numéricos para garantir precisão nos cálculos e gráficos
+    # Tratamento de dados numéricos
     df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
 
-    # Tratamento da coluna Cupom (garantindo formato numérico percentual)
+    # Tratamento da coluna Cupom para exibição percentual limpa
     if "Cupom" in df.columns:
       df["Cupom_Num"] = pd.to_numeric(
           df["Cupom"].astype(str).str.replace("%", "").str.replace(",", "."),
           errors="coerce",
       ).fillna(0)
-      # Se os valores vierem em formato decimal (ex: 0.038), converte para percentual (3.8)
       if df["Cupom_Num"].max() <= 1.0 and df["Cupom_Num"].max() > 0:
         df["Cupom_Num"] = df["Cupom_Num"] * 100
     else:
@@ -50,74 +48,109 @@ try:
         "Selecione o Fundo:", lista_fundos
     )
 
-    # Filtragem do DataFrame com base na escolha do usuário
+    # Filtragem do DataFrame
     if fundo_selecionado != "Todos os Fundos":
-      df_filtrado = df[df["Fundo"] == fundo_selecionado]
+      df_filtrado = df[df["Fundo"] == fundo_selecionado].copy()
       st.sidebar.info(
           f"Exibindo dados detalhados para: **{fundo_selecionado}**"
       )
     else:
-      df_filtrado = df
+      df_filtrado = df.copy()
       st.sidebar.info("Exibindo consolidação de **todos os fundos**.")
 
-    # --- MÉTRICAS PRINCIPAIS ---
-    col1, col2, col3 = st.columns(3)
-
+    # Cálculo do percentual do ativo em relação ao total exibido (Fundo ou Consolidado)
     total_valor = df_filtrado["Valor"].sum()
-    qtd_ativos = len(df_filtrado)
-    cupom_medio = (
-        df_filtrado["Cupom_Num"].mean() if not df_filtrado.empty else 0
+    if total_valor > 0:
+      df_filtrado["% do Fundo"] = (
+          df_filtrado["Valor"] / total_valor
+      ) * 100
+    else:
+      df_filtrado["% do Fundo"] = 0.0
+
+    # Ordenação decrescente por Valor
+    df_filtrado = df_filtrado.sort_values(by="Valor", ascending=False).reset_index(
+        drop=True
     )
 
+    # --- MÉTRICAS PRINCIPAIS ---
+    col1, col2 = st.columns(2)
     col1.metric("Valor Total Alocado", f"R$ {total_valor:,.2f}")
-    col2.metric("Quantidade de Ativos", qtd_ativos)
-    col3.metric("Cupom Médio Ponderado", f"{cupom_medio:,.2f}% a.a.")
+    col2.metric("Quantidade de Ativos", len(df_filtrado))
 
     st.markdown("---")
 
-    # --- SEÇÃO DE GRÁFICOS ---
-    if not df_filtrado.empty:
-      gcol1, gcol2 = st.columns(2)
+    # --- SEÇÃO PRINCIPAL ---
+    if fundo_selecionado == "Todos os Fundos":
+      # PAINEL GERAL: RANKINGS DOS 10 MAIORES E 10 MENORES ATIVOS
+      st.subheader("🏆 Ranking de Ativos (Visão Consolidada)")
 
-      with gcol1:
-        st.subheader("📈 Alocação por Ativo (R$)")
-        fig_pie = px.pie(
-            df_filtrado,
-            names="Ativo",
-            values="Valor",
-            hole=0.4,
-            color_discrete_sequence=px.colors.sequential.Teal,
-        )
-        fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-        st.plotly_chart(fig_pie, use_container_width=True)
+      rcol1, rcol2 = st.columns(2)
 
-      with gcol2:
-        st.subheader("📊 Taxa de Cupom por Ativo (% a.a.)")
-        fig_bar = px.bar(
-            df_filtrado,
-            x="Ativo",
-            y="Cupom_Num",
-            text="Cupom_Num",
-            color="Cupom_Num",
+      with rcol1:
+        st.markdown("### Top 10 Maiores Ativos (R$)")
+        top_10_maiores = df_filtrado.head(10)
+        fig_maiores = px.bar(
+            top_10_maiores.sort_values("Valor", ascending=True),
+            x="Valor",
+            y="Ativo",
+            orientation="h",
+            text_auto=".2s",
+            color="Valor",
             color_continuous_scale="Teal",
         )
-        fig_bar.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
-        fig_bar.update_layout(
-            xaxis_title="Ativo",
-            yaxis_title="Cupom (% a.a.)",
+        fig_maiores.update_layout(
             showlegend=False,
-            margin=dict(t=20, b=20, l=20, r=20),
+            xaxis_title="Valor (R$)",
+            yaxis_title="",
+            margin=dict(t=10, b=10, l=10, r=10),
         )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_maiores, use_container_width=True)
+
+      with rcol2:
+        st.markdown("### Top 10 Menores Ativos (R$)")
+        # Filtra valores maiores que zero para evitar lixo irrelevante no menor ranking
+        top_10_menores = (
+            df_filtrado[df_filtrado["Valor"] > 0].tail(10).sort_values("Valor", ascending=True)
+        )
+        fig_menores = px.bar(
+            top_10_menores,
+            x="Valor",
+            y="Ativo",
+            orientation="h",
+            text_auto=".2s",
+            color="Valor",
+            color_continuous_scale="Blues",
+        )
+        fig_menores.update_layout(
+            showlegend=False,
+            xaxis_title="Valor (R$)",
+            yaxis_title="",
+            margin=dict(t=10, b=10, l=10, r=10),
+        )
+        st.plotly_chart(fig_menores, use_container_width=True)
+
+    else:
+      # PAINEL ESPECÍFICO DO FUNDO: GRÁFICO DE BARRAS LIMPO DOS ATIVOS
+      st.subheader(f"📈 Alocação por Ativo - {fundo_selecionado}")
+      fig_bar = px.bar(
+          df_filtrado.sort_values("Valor", ascending=True),
+          x="Valor",
+          y="Ativo",
+          orientation="h",
+          text_auto=".2s",
+          color="Valor",
+          color_continuous_scale="Teal",
+      )
+      fig_bar.update_layout(
+          xaxis_title="Valor Alocado (R$)",
+          yaxis_title="",
+          showlegend=False,
+          margin=dict(t=20, b=20, l=20, r=20),
+          height=max(400, len(df_filtrado) * 25),  # Ajusta altura dinamicamente
+      )
+      st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("---")
 
-    # --- TABELA INTERATIVA ---
-    st.subheader("📋 Detalhamento da Carteira")
-    st.dataframe(df_filtrado, use_container_width=True)
-
-except Exception as e:
-  st.error(
-      "⚠️ O arquivo 'carteira_ativos.xlsx' não foi encontrado ou apresenta"
-      f" erro de estrutura. Detalhes do erro: {e}"
-  )
+    # --- TABELA INTERATIVA ORDENADA COM % DO FUNDO ---
+    st.
