@@ -467,52 +467,21 @@ with t1:
                 tabela(rank_view(rt, total, curto=True), column_config=RANK_CFG(total, max(1, base["Volume"].max()), idx=ir), height=38 + 35 * len(rt))
         fonte()
 
-        legenda_fig(3, f"Onde estão as operações: taxa × volume, {ir}",
-                    "Cada ponto é uma operação. Volume em escala logarítmica para separar as operações menores. "
-                    "As linhas tracejadas marcam as medianas de taxa e de volume")
+        legenda_fig(3, f"Volume e taxa das operações em {ir}", "Cada ponto é uma operação; as 10 maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
         sc = base.copy()
         sc["mi"] = sc["Volume"] / 1e6
-        sc = sc[sc["mi"] > 0]
-        cA, cB, _ = st.columns([1.2, 1, 2], vertical_alignment="bottom")
-        n_rot = cA.select_slider("Operações identificadas", options=[0, 5, 10, 15], value=10, key="n_rot")
-        por_inst = cB.toggle("Colorir por instrumento", value=False)
-        top = set(sc.nlargest(n_rot, "Volume")["Chave"]) if n_rot else set()
-        sc["nome"] = sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True)
-        sc["Destaque"] = np.where(sc["Chave"].isin(top), f"{n_rot} maiores por volume", "Demais operações")
-        med_t, med_v = float(sc["Taxa"].median()), float(sc["mi"].median())
-
-        fig = go.Figure()
-        if por_inst:
-            cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#9AA39D"}
-            grupos = [(g, x, cores.get(g, "#9AA39D")) for g, x in sc.groupby("Instrumento")]
-        else:
-            grupos = [("Demais operações", sc[~sc["Chave"].isin(top)], "#AEB8B2"), (f"{n_rot} maiores por volume", sc[sc["Chave"].isin(top)], GREEN)]
-        for nome, x, cor in grupos:
-            if not len(x):
-                continue
-            fig.add_trace(go.Scatter(
-                x=x["Taxa"], y=x["mi"], mode="markers", name=nome,
-                marker=dict(size=9, color=cor, opacity=0.85, line=dict(width=0.6, color="white")),
-                customdata=np.stack([x["Ativo"], x["Fundos"], x["Taxa"], x["mi"]], axis=-1),
-                hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>Volume: R$ %{customdata[3]:.1f} mi<extra></extra>"))
-        # rótulos das maiores, alternando lados para reduzir sobreposição
-        for k, (_, r) in enumerate(sc[sc["Chave"].isin(top)].sort_values("mi", ascending=False).iterrows()):
-            lado = 1 if r["Taxa"] < med_t else -1
-            fig.add_annotation(x=r["Taxa"], y=np.log10(r["mi"]), text=r["nome"], showarrow=True, arrowhead=0, arrowwidth=0.6, arrowcolor="#9AA39D",
-                               ax=lado * (34 + (k % 3) * 14), ay=-14 - (k % 2) * 12, xanchor="left" if lado > 0 else "right",
-                               font=dict(size=11.5, color=INK), bgcolor="rgba(246,248,246,0.85)")
-        fig.add_vline(x=med_t, line=dict(color=MUTED, width=1, dash="dash"))
-        fig.add_hline(y=med_v, line=dict(color=MUTED, width=1, dash="dash"))
-        ymax = sc["mi"].max() * 1.6
-        for xx, yy, txt, anc in [(sc["Taxa"].min(), ymax, "Volume alto, taxa abaixo da mediana", "left"),
-                                 (sc["Taxa"].max(), ymax, "Volume alto, taxa acima da mediana", "right")]:
-            fig.add_annotation(x=xx, y=np.log10(yy), text=txt, showarrow=False, xanchor=anc, yanchor="top", font=dict(size=11, color=MUTED))
-        fig.update_yaxes(type="log", title="Volume (R$ milhões, escala log)", tickvals=[0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500],
-                         ticktext=["0,5", "1", "2", "5", "10", "20", "50", "100", "200", "500"], range=[np.log10(max(sc["mi"].min() * 0.7, 0.1)), np.log10(ymax)])
-        fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA", zeroline=False)
-        mostrar(estilo(fig, 520))
-        st.markdown(f'<div class="src">Mediana da taxa: {taxa_txt(med_t, ir)}. Mediana do volume: R$ {num_br(med_v, 1)} mi. '
-                    'Passe o mouse sobre um ponto para ver a operação e os fundos. Fonte: carteiras informadas nos relatórios de gestão.</div>', unsafe_allow_html=True)
+        top = set(sc.nlargest(10, "Volume")["Chave"])
+        sc["rotulo"] = np.where(sc["Chave"].isin(top), sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True), "")
+        cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#6E7A72"}
+        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=40,
+                         custom_data=["Ativo", "Fundos", "Taxa", "mi"])
+        fig.update_traces(textposition="top center", textfont=dict(size=11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
+                          hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.1f} mi<extra></extra>")
+        fig.add_vline(x=float(sc["Taxa"].median()), line=dict(color=MUTED, width=1, dash="dash"))
+        fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
+        fig.update_yaxes(title="Volume (R$ milhões)")
+        mostrar(estilo(fig, 460))
+        fonte()
 
     if tem_venc and df["Vencimento"].notna().any():
         legenda_fig(4, "Vencimentos por ano", "R$ milhões")
