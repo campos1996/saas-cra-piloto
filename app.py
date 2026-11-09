@@ -1,196 +1,599 @@
+"""
+TeraAg — Monitor do crédito privado agro (MVP)
+
+Lê a planilha carteira_ativos.xlsx do repositório (ou uma planilha enviada pela barra lateral)
+e mostra as carteiras dos fundos: volumes, taxas praticadas, concentração por devedor,
+comparação entre fundos e a carteira completa para exportar.
+
+Colunas obrigatórias: Fundo, Ativo, Valor.
+Colunas usadas quando existirem: Codigo_Ativo, Indexador, Cupom, Segmento, Vencimento, Duration, Rating, Mes.
+"""
+from __future__ import annotations
+
+import io
+import re
+import unicodedata
+
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(
-    page_title="Monitor de Crédito", layout="wide"
+st.set_page_config(page_title="TeraAg — Monitor de crédito privado", page_icon="🌾", layout="wide")
+
+ARQUIVO = "carteira_ativos.xlsx"
+
+GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#123524", "#5F8B7A", "#A8721A", "#1E2B26", "#6B776F", "#D6DED9", "#9B1C1C"
+PALETA = [GREEN, MID, GOLD, "#4F63A0", "#8C4F3A", "#9DBBA9", "#6E7A72", "#C9A24A", "#2F5A3E"]
+
+st.markdown(
+    f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,600&display=swap');
+html, body, .stApp, .stMarkdown, button, input, select {{ font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; }}
+.stApp {{ background: #F6F8F6; }}
+.block-container {{ padding-top: 2.6rem; max-width: 1400px; }}
+.tg-head {{ display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid {LINE}; padding-bottom: 12px; margin-bottom: 18px; }}
+.tg-logo {{ font-family: 'Source Serif 4', Georgia, serif; font-weight: 600; font-size: 30px; color: {GREEN}; line-height: 1; }}
+.tg-sub {{ color: {MUTED}; font-size: 15px; }}
+.tg-ref {{ margin-left: auto; color: {MUTED}; font-size: 13px; }}
+.kpis {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 2px solid {GREEN}; border-bottom: 1px solid {LINE}; margin: 4px 0 18px; }}
+.kpi {{ padding: 12px 14px 12px 0; min-width: 0; }}
+.kpi .l {{ font-size: 12px; color: {MUTED}; }}
+.kpi .v {{ font-size: 22px; font-weight: 600; color: {INK}; font-variant-numeric: tabular-nums; line-height: 1.3; white-space: nowrap; }}
+.kpi .n {{ font-size: 12px; color: {MUTED}; }}
+.kpi .v.alert {{ color: {RED}; }}
+@media (max-width: 1000px) {{ .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+.lead {{ font-size: 16px; line-height: 1.65; color: {INK}; max-width: 900px; margin: 0 0 6px; }}
+.fig {{ font-size: 11.5px; font-weight: 700; color: {MID}; margin-top: 14px; }}
+.figt {{ font-size: 15px; font-weight: 600; color: {INK}; }}
+.figs {{ font-size: 12.5px; color: {MUTED}; margin-bottom: 2px; }}
+.src {{ font-size: 11.5px; color: {MUTED}; margin: -4px 0 14px; }}
+.note {{ font-size: 13px; color: {MUTED}; line-height: 1.55; }}
+.h2 {{ font-size: 19px; font-weight: 600; color: {GREEN}; margin: 26px 0 6px; padding-top: 14px; border-top: 1px solid {LINE}; }}
+div[data-testid="stTabs"] button p {{ font-size: 15px; font-weight: 500; }}
+div[data-testid="stDataFrame"] {{ border-top: 2px solid {GREEN}; }}
+</style>
+""",
+    unsafe_allow_html=True,
 )
-st.title("📊 Monitor de Ativos de Crédito")
-st.write("Painel analítico conectado à base de dados em Excel.")
 
 
-# Função para carregar os dados do arquivo Excel
-@st.cache_data
-def carregar_dados():
-  df = pd.read_excel("carteira_ativos.xlsx")
-  return df
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
+def norm(s) -> str:
+    s = unicodedata.normalize("NFD", "" if s is None else str(s))
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
+
+def num_br(v, dec=0) -> str:
+    try:
+        if v is None or pd.isna(v):
+            return "—"
+    except (TypeError, ValueError):
+        return "—"
+    return f"{float(v):,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def brl(v) -> str:
+    if v is None or pd.isna(v):
+        return "—"
+    a = abs(v)
+    if a >= 1e9:
+        return f"R$ {num_br(v / 1e9, 2)} bi"
+    if a >= 1e6:
+        return f"R$ {num_br(v / 1e6, 1)} mi"
+    if a >= 1e3:
+        return f"R$ {num_br(v / 1e3, 0)} mil"
+    return f"R$ {num_br(v, 0)}"
+
+
+def taxa_txt(v, idx="CDI+") -> str:
+    if v is None or pd.isna(v):
+        return "—"
+    return {"CDI+": f"CDI + {num_br(v, 2)}%", "IPCA+": f"IPCA + {num_br(v, 2)}%", "%CDI": f"{num_br(v, 1)}% do CDI",
+            "Pré": f"{num_br(v, 2)}% a.a."}.get(idx, f"{num_br(v, 2)}%")
+
+
+def para_numero(v) -> float:
+    """Aceita 99055355.7, '99.055.355,70', 'R$ 1.234,56', '3,80%'."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return np.nan
+    if isinstance(v, (int, float, np.number)):
+        return float(v)
+    s = re.sub(r"[^\d,.\-]", "", str(v))
+    if not s:
+        return np.nan
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".") if s.rfind(",") > s.rfind(".") else s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif s.count(".") > 1:
+        s = s.replace(".", "")
+    try:
+        return float(s)
+    except ValueError:
+        return np.nan
+
+
+def indexador_de(txt) -> str:
+    n = norm(txt)
+    if not n or n in ("na", "nan"):
+        return "Sem indexador"
+    if "ipca" in n:
+        return "IPCA+"
+    if "pct" in n or "%" in str(txt) and "cdi" in n:
+        return "%CDI"
+    if "cdi" in n or n == "di":
+        return "CDI+"
+    if "pre" in n:
+        return "Pré"
+    return str(txt).strip()
+
+
+PREFIXOS = [("cprf", "CPR-F"), ("cpr", "CPR-F"), ("cra", "CRA"), ("cri", "CRI"), ("debenture", "Debênture"), ("fidc", "Cotas de FIDC"),
+            ("fiagro", "Cotas de Fiagro"), ("cdca", "CDCA"), ("nc", "Nota comercial"), ("notacomercial", "Nota comercial")]
+
+
+def instrumento_de(ativo) -> str:
+    primeira = norm(str(ativo).split(" ")[0])
+    for pre, nome in PREFIXOS:
+        if primeira == pre:
+            return nome
+    return "Outros"
+
+
+def devedor_de(ativo) -> str:
+    """'CRA Languiru II 2S' -> 'Languiru'; 'FIDC Agroforte - Sênior' -> 'Agroforte'."""
+    d = re.sub(r"^(CRA|CRI|CPR-F|CPRF|CPR|Debênture|Debenture|FIDC|FIAGRO|CDCA|NC)\s+", "", str(ativo).strip(), flags=re.I)
+    d = re.split(r"\s+-\s+", d)[0]
+    d = re.sub(r"(\s+(I{1,3}|IV|V|VI{0,3}|IX|X|\d+[ªa]?\s*S(érie)?|\d+S|S[eê]nior|Mezanino|Sub(ordinada)?))+$", "", d, flags=re.I)
+    return d.strip() or str(ativo)
+
+
+COLUNAS = {
+    "fundo": ["fundo", "carteira", "veiculo", "ticker"],
+    "ativo": ["ativo", "nomedoativo", "papel", "operacao"],
+    "codigo": ["codigoativo", "codigo", "cetip", "codigob3", "isin"],
+    "valor": ["valor", "valorrs", "posicao", "saldo", "financeiro"],
+    "indexador": ["indexador", "index", "remuneracao"],
+    "taxa": ["cupom", "coupon", "taxa", "spread"],
+    "segmento": ["segmento", "setor"],
+    "vencimento": ["vencimento", "datadevencimento"],
+    "duration": ["duration", "durationanos", "prazo"],
+    "rating": ["rating"],
+    "mes": ["mes", "mesreferencia", "data", "database", "referencia"],
+}
+
+
+def mapear_colunas(cols) -> dict:
+    out = {}
+    for campo, chaves in COLUNAS.items():
+        for c in cols:
+            if norm(c) in chaves and c not in out.values():
+                out[campo] = c
+                break
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def ler_planilha(conteudo: bytes | None) -> pd.DataFrame:
+    if conteudo is None:
+        return pd.read_excel(ARQUIVO)
+    return pd.read_excel(io.BytesIO(conteudo))
+
+
+def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    mp = mapear_colunas(bruto.columns)
+    faltam = [c for c in ["fundo", "ativo", "valor"] if c not in mp]
+    if faltam:
+        raise ValueError("A planilha precisa das colunas Fundo, Ativo e Valor. Não encontrei: " + ", ".join(faltam) + ".")
+    df = pd.DataFrame({
+        "Fundo": bruto[mp["fundo"]].astype(str).str.strip(),
+        "Ativo": bruto[mp["ativo"]].astype(str).str.strip(),
+        "Codigo": bruto[mp["codigo"]].astype(str).str.strip().replace({"nan": "", "-": "", "None": ""}) if "codigo" in mp else "",
+        "Valor": bruto[mp["valor"]].map(para_numero),
+    })
+    df["Indexador"] = bruto[mp["indexador"]].map(indexador_de) if "indexador" in mp else "Sem indexador"
+    if "taxa" in mp:
+        t = bruto[mp["taxa"]].map(para_numero)
+        # Excel guarda 3,80% como 0,038: se a mediana estiver abaixo de 1, a coluna está em fração
+        if t.dropna().abs().median() < 1:
+            t = t * 100
+        df["Taxa"] = t
+    else:
+        df["Taxa"] = np.nan
+    df.loc[df["Indexador"] == "Sem indexador", "Taxa"] = np.nan
+    df["Instrumento"] = df["Ativo"].map(instrumento_de)
+    df["Devedor"] = df["Ativo"].map(devedor_de)
+    df["Segmento"] = bruto[mp["segmento"]].astype(str).str.strip() if "segmento" in mp else ""
+    df["Vencimento"] = pd.to_datetime(bruto[mp["vencimento"]], dayfirst=True, errors="coerce") if "vencimento" in mp else pd.NaT
+    df["Duration"] = bruto[mp["duration"]].map(para_numero) if "duration" in mp else np.nan
+    df["Rating"] = bruto[mp["rating"]].astype(str).replace({"nan": ""}) if "rating" in mp else ""
+    df["Mes"] = bruto[mp["mes"]].astype(str).str[:7] if "mes" in mp else ""
+    df = df[(df["Ativo"] != "") & (df["Ativo"].str.lower() != "nan") & df["Valor"].notna() & (df["Valor"] > 0)]
+    df = df[~df["Ativo"].map(norm).str.startswith(("total", "caixa", "patrimonio", "rendimentos"))]
+    return df.reset_index(drop=True), mp
+
+
+def media_pond(d: pd.DataFrame, col="Taxa"):
+    x = d[d[col].notna()]
+    return float((x[col] * x["Valor"]).sum() / x["Valor"].sum()) if len(x) and x["Valor"].sum() > 0 else None
+
+
+def dispersao(d: pd.DataFrame, por: str) -> pd.DataFrame:
+    out = []
+    for g, x in d[d["Taxa"].notna()].groupby(por):
+        out.append({por: g, "Ativos": len(x), "Volume": x["Valor"].sum(), "Mínimo": x["Taxa"].min(), "Média ponderada": media_pond(x),
+                    "Mediana": x["Taxa"].median(), "Máximo": x["Taxa"].max()})
+    return pd.DataFrame(out).sort_values("Volume", ascending=False) if out else pd.DataFrame()
+
+
+def hhi(valores: pd.Series) -> float:
+    s = valores / valores.sum()
+    return float((s ** 2).sum() * 10000)
+
+
+def estilo(fig, altura=380, legenda=True):
+    fig.update_layout(
+        template="simple_white", height=altura, separators=",.", margin=dict(l=8, r=16, t=10, b=8),
+        font=dict(family="IBM Plex Sans, Segoe UI, sans-serif", size=13, color=INK),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=legenda,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title=None),
+        hoverlabel=dict(bgcolor="white", font_size=13),
+    )
+    fig.update_xaxes(showgrid=False, linecolor=LINE, tickfont=dict(color=MUTED))
+    fig.update_yaxes(showgrid=True, gridcolor="#E8EDEA", linecolor=LINE, tickfont=dict(color=MUTED))
+    return fig
+
+
+def mostrar(fig):
+    try:
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def legenda_fig(n, titulo, sub=""):
+    st.markdown(f'<div class="fig">Figura {n}</div><div class="figt">{titulo}</div>' + (f'<div class="figs">{sub}</div>' if sub else ""), unsafe_allow_html=True)
+
+
+def fonte(txt="carteiras informadas nos relatórios de gestão dos fundos."):
+    st.markdown(f'<div class="src">Fonte: {txt}</div>', unsafe_allow_html=True)
+
+
+def tabela(df, **kw):
+    try:
+        st.dataframe(df, hide_index=True, width="stretch", **kw)
+    except TypeError:
+        st.dataframe(df, hide_index=True, use_container_width=True, **kw)
+
+
+# ---------------------------------------------------------------------------
+# Dados
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### Base de dados")
+    origem = st.radio("Origem", ["Planilha do repositório", "Enviar outra planilha"], label_visibility="collapsed")
+    conteudo = None
+    if origem == "Enviar outra planilha":
+        up = st.file_uploader("Planilha (.xlsx)", type=["xlsx", "xls"])
+        if up is None:
+            st.info("Envie uma planilha com as colunas Fundo, Ativo e Valor.")
+            st.stop()
+        conteudo = up.getvalue()
 
 try:
-  df = carregar_dados()
-
-  if df.empty or "Valor" not in df.columns or "Fundo" not in df.columns:
-    st.warning(
-        "⚠️ O seu arquivo 'carteira_ativos.xlsx' está vazio ou sem as colunas"
-        " corretas ('Fundo', 'Ativo', 'Valor', etc.)."
-    )
-  else:
-    # Tratamento de dados numéricos para Valor
-    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
-
-    # Tratamento robusto da coluna Cupom (converte decimais e textos para formato percentual amigável)
-    if "Cupom" in df.columns:
-      # Tenta converter para float tirando '%' e trocando vírgula por ponto
-      cupom_temp = pd.to_numeric(
-          df["Cupom"].astype(str).str.replace("%", "").str.replace(",", "."),
-          errors="coerce",
-      ).fillna(0)
-
-      # Se os valores vierem em decimal (ex: 0.038), ajusta para escala de 0 a 100
-      if cupom_temp.max() <= 1.0 and cupom_temp.max() > 0:
-        cupom_temp = cupom_temp * 100
-
-      df["Cupom_Num"] = cupom_temp
-      df["Cupom_Formatado"] = df["Cupom_Num"].apply(lambda x: f"{x:.2f}%")
-    else:
-      df["Cupom_Num"] = 0
-      df["Cupom_Formatado"] = "0.00%"
-
-    # --- BARRA LATERAL: SELEÇÃO DE FUNDO ---
-    st.sidebar.header("🔍 Filtros de Navegação")
-    lista_fundos = ["Todos os Fundos"] + sorted(
-        df["Fundo"].dropna().unique().tolist()
-    )
-    fundo_selecionado = st.sidebar.selectbox(
-        "Selecione o Fundo:", lista_fundos
-    )
-
-    # Filtragem do DataFrame
-    if fundo_selecionado != "Todos os Fundos":
-      df_filtrado = df[df["Fundo"] == fundo_selecionado].copy()
-      st.sidebar.info(
-          f"Exibindo dados detalhados para: **{fundo_selecionado}**"
-      )
-    else:
-      df_filtrado = df.copy()
-      st.sidebar.info("Exibindo consolidação de **todos os fundos**.")
-
-    # Cálculo do percentual do ativo em relação ao total exibido (Fundo ou Consolidado)
-    total_valor = df_filtrado["Valor"].sum()
-    if total_valor > 0:
-      df_filtrado["% do Fundo"] = (
-          df_filtrado["Valor"] / total_valor
-      ) * 100
-    else:
-      df_filtrado["% do Fundo"] = 0.0
-
-    # Ordenação decrescente por Valor
-    df_filtrado = df_filtrado.sort_values(
-        by="Valor", ascending=False
-    ).reset_index(drop=True)
-
-    # --- MÉTRICAS PRINCIPAIS ---
-    col1, col2 = st.columns(2)
-    col1.metric("Valor Total Alocado", f"R$ {total_valor:,.2f}")
-    col2.metric("Quantidade de Ativos", len(df_filtrado))
-
-    st.markdown("---")
-
-    # --- SEÇÃO PRINCIPAL ---
-    if fundo_selecionado == "Todos os Fundos":
-      # PAINEL GERAL: RANKINGS DOS 10 MAIORES E 10 MENORES ATIVOS
-      st.subheader("🏆 Ranking de Ativos (Visão Consolidada)")
-
-      rcol1, rcol2 = st.columns(2)
-
-      with rcol1:
-        st.markdown("### Top 10 Maiores Ativos (R$)")
-        top_10_maiores = df_filtrado.head(10)
-        fig_maiores = px.bar(
-            top_10_maiores.sort_values("Valor", ascending=True),
-            x="Valor",
-            y="Ativo",
-            orientation="h",
-            text_auto=".2s",
-            color="Valor",
-            color_continuous_scale="Teal",
-        )
-        fig_maiores.update_layout(
-            showlegend=False,
-            xaxis_title="Valor (R$)",
-            yaxis_title="",
-            margin=dict(t=10, b=10, l=10, r=10),
-        )
-        st.plotly_chart(fig_maiores, use_container_width=True)
-
-      with rcol2:
-        st.markdown("### Top 10 Menores Ativos (R$)")
-        top_10_menores = (
-            df_filtrado[df_filtrado["Valor"] > 0]
-            .tail(10)
-            .sort_values("Valor", ascending=True)
-        )
-        fig_menores = px.bar(
-            top_10_menores,
-            x="Valor",
-            y="Ativo",
-            orientation="h",
-            text_auto=".2s",
-            color="Valor",
-            color_continuous_scale="Blues",
-        )
-        fig_menores.update_layout(
-            showlegend=False,
-            xaxis_title="Valor (R$)",
-            yaxis_title="",
-            margin=dict(t=10, b=10, l=10, r=10),
-        )
-        st.plotly_chart(fig_menores, use_container_width=True)
-
-    else:
-      # PAINEL ESPECÍFICO DO FUNDO: GRÁFICO DE BARRAS LIMPO DOS ATIVOS
-      st.subheader(f"📈 Alocação por Ativo - {fundo_selecionado}")
-      fig_bar = px.bar(
-          df_filtrado.sort_values("Valor", ascending=True),
-          x="Valor",
-          y="Ativo",
-          orientation="h",
-          text_auto=".2s",
-          color="Valor",
-          color_continuous_scale="Teal",
-      )
-      fig_bar.update_layout(
-          xaxis_title="Valor Alocado (R$)",
-          yaxis_title="",
-          showlegend=False,
-          margin=dict(t=20, b=20, l=20, r=20),
-          height=max(
-              400, len(df_filtrado) * 25
-          ),  # Ajusta altura dinamicamente
-      )
-      st.plotly_chart(fig_bar, use_container_width=True)
-
-    st.markdown("---")
-
-    # --- TABELA INTERATIVA ORDENADA COM % DO FUNDO ---
-    st.subheader(f"📋 Detalhamento da Carteira ({fundo_selecionado})")
-
-    df_exibicao = df_filtrado.copy()
-    df_exibicao["Valor (R$)"] = df_exibicao["Valor"].apply(
-        lambda x: f"R$ {x:,.2f}"
-    )
-    df_exibicao["% do Fundo"] = df_exibicao["% do Fundo"].apply(
-        lambda x: f"{x:.2f}%"
-    )
-
-    # Substitui a coluna Cupom antiga pela formatada em percentual limpo
-    df_exibicao["Cupom"] = df_exibicao["Cupom_Formatado"]
-
-    colunas_mostrar = [
-        "Fundo",
-        "Ativo",
-        "Codigo_Ativo",
-        "Valor (R$)",
-        "% do Fundo",
-        "Indexador",
-        "Cupom",
-    ]
-    st.dataframe(
-        df_exibicao[colunas_mostrar], use_container_width=True, hide_index=True
-    )
-
+    df_all, mapa = preparar(ler_planilha(conteudo))
+except FileNotFoundError:
+    st.error(f"Não encontrei o arquivo {ARQUIVO} no repositório. Confira o nome do arquivo ou envie a planilha pela barra lateral.")
+    st.stop()
 except Exception as e:
-  st.error(
-      "⚠️ Erro ao carregar ou processar o arquivo 'carteira_ativos.xlsx'."
-      f" Detalhes técnicos: {e}"
-  )
+    st.error(f"Não foi possível ler a planilha: {e}")
+    st.stop()
+
+if df_all.empty:
+    st.warning("A planilha não tem linhas com Fundo, Ativo e Valor preenchidos.")
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Filtros
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### Filtros")
+    fundos_disp = sorted(df_all["Fundo"].unique())
+    fundos = st.multiselect("Fundos", fundos_disp, default=fundos_disp)
+    idx_disp = [i for i in ["CDI+", "IPCA+", "%CDI", "Pré"] if i in set(df_all["Indexador"])] + sorted(set(df_all["Indexador"]) - {"CDI+", "IPCA+", "%CDI", "Pré"})
+    idxs = st.multiselect("Indexador", idx_disp, default=idx_disp)
+    inst_disp = sorted(df_all["Instrumento"].unique())
+    insts = st.multiselect("Instrumento", inst_disp, default=inst_disp)
+    segs = []
+    if (df_all["Segmento"] != "").any():
+        seg_disp = sorted(s for s in df_all["Segmento"].unique() if s)
+        segs = st.multiselect("Segmento", seg_disp, default=seg_disp)
+    busca = st.text_input("Buscar ativo, devedor ou código")
+    st.markdown("---")
+    with st.expander("Como enriquecer a planilha"):
+        st.markdown(
+            "Além de **Fundo, Ativo, Codigo_Ativo, Valor, Indexador e Cupom**, o painel usa, se existirem, as colunas "
+            "**Segmento** (produtor, cooperativa, distribuidora…), **Vencimento**, **Duration**, **Rating** e **Mes** "
+            "(mês de referência da carteira, AAAA-MM). Com elas aparecem as análises por setor, por prazo e a evolução mensal."
+        )
+
+df = df_all[df_all["Fundo"].isin(fundos) & df_all["Indexador"].isin(idxs) & df_all["Instrumento"].isin(insts)]
+if segs:
+    df = df[df["Segmento"].isin(segs) | (df["Segmento"] == "")]
+if busca:
+    nb = norm(busca)
+    df = df[df["Ativo"].map(norm).str.contains(nb) | df["Devedor"].map(norm).str.contains(nb) | df["Codigo"].map(norm).str.contains(nb)]
+
+tem_seg = (df["Segmento"] != "").any()
+tem_venc = df["Vencimento"].notna().any() or df["Duration"].notna().any()
+
+# ---------------------------------------------------------------------------
+# Cabeçalho, indicadores e resumo
+# ---------------------------------------------------------------------------
+st.markdown(f'<div class="tg-head"><span class="tg-logo">TeraAg</span><span class="tg-sub">Monitor do crédito privado agro</span>'
+            f'<span class="tg-ref">{df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</span></div>', unsafe_allow_html=True)
+
+if df.empty:
+    st.info("Nenhum ativo para os filtros escolhidos.")
+    st.stop()
+
+total = df["Valor"].sum()
+cdi = df[df["Indexador"] == "CDI+"]
+ipca = df[df["Indexador"] == "IPCA+"]
+por_dev = df.groupby("Devedor")["Valor"].sum().sort_values(ascending=False)
+top10 = por_dev.head(10).sum() / total * 100
+maior_dev, maior_pct = por_dev.index[0], por_dev.iloc[0] / total * 100
+cruzados = df.groupby("Devedor")["Fundo"].nunique()
+n_cruz = int((cruzados > 1).sum())
+
+kpis = [
+    ("Volume em carteira", brl(total), f"{df['Fundo'].nunique()} fundo(s)"),
+    ("Ativos", str(len(df)), f"{df['Devedor'].nunique()} devedores"),
+    ("Taxa média em CDI+", taxa_txt(media_pond(cdi)), f"{len(cdi)} ativos, ponderada por valor"),
+    ("Taxa média em IPCA+", taxa_txt(media_pond(ipca), "IPCA+"), f"{len(ipca)} ativos" if len(ipca) else "Nenhum ativo"),
+    ("10 maiores devedores", f"{num_br(top10, 1)}%", "do volume filtrado"),
+    ("Devedores em mais de um fundo", str(n_cruz), "mesmo risco em fundos diferentes" if n_cruz else "Nenhum"),
+]
+st.markdown('<div class="kpis">' + "".join(f'<div class="kpi"><div class="l">{l}</div><div class="v">{v}</div><div class="n">{n}</div></div>' for l, v, n in kpis) + "</div>",
+            unsafe_allow_html=True)
+
+disp_cdi = dispersao(cdi, "Fundo")
+frases = [f"Os {df['Fundo'].nunique()} fundo(s) filtrados somam {brl(total)} em {len(df)} ativos de {df['Devedor'].nunique()} devedores."]
+if len(cdi):
+    frases.append(f"Em CDI+, as taxas vão de {taxa_txt(cdi['Taxa'].min())} a {taxa_txt(cdi['Taxa'].max())}, com média ponderada de {taxa_txt(media_pond(cdi))}.")
+frases.append(f"O maior devedor é {maior_dev}, com {num_br(maior_pct, 1)}% do volume; os dez maiores somam {num_br(top10, 0)}%.")
+if n_cruz:
+    frases.append(f"{n_cruz} devedor(es) aparecem em mais de um fundo.")
+st.markdown(f'<p class="lead">{" ".join(frases)}</p>', unsafe_allow_html=True)
+
+t1, t2, t3, t4, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Comparar fundos", "Carteira"])
+
+# ---------------------------------------------------------------------------
+# Visão geral
+# ---------------------------------------------------------------------------
+with t1:
+    c1, c2 = st.columns([1, 1], gap="large")
+    with c1:
+        legenda_fig(1, "Volume por fundo", "R$ milhões")
+        vf = df.groupby("Fundo", as_index=False)["Valor"].sum().sort_values("Valor")
+        vf["mi"] = vf["Valor"] / 1e6
+        vf["rot"] = vf.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 0)}%)", axis=1)
+        fig = px.bar(vf, x="mi", y="Fundo", orientation="h", text="rot", color_discrete_sequence=[GREEN])
+        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
+        fig.update_xaxes(title=None, showticklabels=False, range=[0, vf["mi"].max() * 1.35])
+        fig.update_yaxes(title=None, showgrid=False)
+        mostrar(estilo(fig, max(220, 60 + 42 * len(vf)), legenda=False))
+        fonte()
+    with c2:
+        legenda_fig(2, "Composição por instrumento", "Participação no volume de cada fundo")
+        ci = df.groupby(["Fundo", "Instrumento"], as_index=False)["Valor"].sum()
+        ci["pct"] = ci["Valor"] / ci.groupby("Fundo")["Valor"].transform("sum") * 100
+        fig = px.bar(ci, x="pct", y="Fundo", color="Instrumento", orientation="h", color_discrete_sequence=PALETA,
+                     custom_data=["Instrumento", "Valor"])
+        fig.update_traces(hovertemplate="%{customdata[0]}: %{x:.1f}%<extra></extra>")
+        fig.update_xaxes(title=None, ticksuffix="%", range=[0, 100])
+        fig.update_yaxes(title=None, showgrid=False)
+        fig.update_layout(barmode="stack")
+        mostrar(estilo(fig, max(220, 90 + 42 * df["Fundo"].nunique())))
+        fonte()
+
+    legenda_fig(3, "Mapa das carteiras", "Área proporcional ao valor; cor pela taxa em CDI+ (cinza: outros indexadores)")
+    tm = df.copy()
+    tm["Taxa CDI+"] = np.where(tm["Indexador"] == "CDI+", tm["Taxa"], np.nan)
+    fig = px.treemap(tm, path=[px.Constant("Carteiras"), "Fundo", "Instrumento", "Devedor"], values="Valor", color="Taxa CDI+",
+                     color_continuous_scale=["#E4EDE8", MID, GREEN], custom_data=["Taxa CDI+"])
+    fig.update_traces(hovertemplate="<b>%{label}</b><br>R$ %{value:,.0f}<extra></extra>", marker=dict(line=dict(color="white", width=1)),
+                      root_color="#F6F8F6")
+    fig.update_layout(coloraxis_colorbar=dict(title="CDI +", ticksuffix="%", thickness=10))
+    mostrar(estilo(fig, 520, legenda=False))
+    fonte()
+
+    if tem_venc and df["Vencimento"].notna().any():
+        legenda_fig(4, "Vencimentos por ano", "R$ milhões")
+        vv = df[df["Vencimento"].notna()].assign(Ano=lambda x: x["Vencimento"].dt.year).groupby(["Ano", "Fundo"], as_index=False)["Valor"].sum()
+        vv["mi"] = vv["Valor"] / 1e6
+        fig = px.bar(vv, x="Ano", y="mi", color="Fundo", color_discrete_sequence=PALETA)
+        fig.update_xaxes(title=None, dtick=1)
+        fig.update_yaxes(title=None)
+        mostrar(estilo(fig, 320))
+        fonte()
+
+# ---------------------------------------------------------------------------
+# Taxas
+# ---------------------------------------------------------------------------
+with t2:
+    idx_ok = [i for i in ["CDI+", "IPCA+", "%CDI", "Pré"] if (df["Indexador"] == i).any() and df.loc[df["Indexador"] == i, "Taxa"].notna().any()]
+    if not idx_ok:
+        st.info("Nenhum ativo com indexador e taxa preenchidos.")
+    else:
+        idx = st.radio("Indexador", idx_ok, horizontal=True, label_visibility="collapsed")
+        d = df[(df["Indexador"] == idx) & df["Taxa"].notna()]
+        st.markdown(f'<p class="note">{len(d)} ativos em {idx}, somando {brl(d["Valor"].sum())}. Média ponderada pelo valor em carteira.</p>', unsafe_allow_html=True)
+
+        c1, c2 = st.columns([1.15, 1], gap="large")
+        with c1:
+            legenda_fig(5, f"Taxas por fundo, {idx}", "Cada ponto é um ativo")
+            fig = px.strip(d, x="Taxa", y="Fundo", color="Fundo", color_discrete_sequence=PALETA, custom_data=["Ativo", "Valor"])
+            fig.update_traces(marker=dict(size=10, opacity=0.75, line=dict(width=0.5, color="white")), jitter=0.45,
+                              hovertemplate="%{customdata[0]}<br>%{x:.2f}%<br>R$ %{customdata[1]:,.0f}<extra></extra>")
+            for _, r in dispersao(d, "Fundo").iterrows():
+                fig.add_trace(go.Scatter(x=[r["Média ponderada"]], y=[r["Fundo"]], mode="markers", showlegend=False,
+                                         marker=dict(symbol="line-ns", size=26, line=dict(width=3, color=INK)),
+                                         hovertemplate=f"Média ponderada: {num_br(r['Média ponderada'], 2)}%<extra></extra>"))
+            fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
+            fig.update_yaxes(title=None, showgrid=False)
+            mostrar(estilo(fig, max(260, 90 + 70 * d["Fundo"].nunique()), legenda=False))
+            st.markdown('<div class="src">Traço preto: média ponderada do fundo. Fonte: carteiras informadas nos relatórios de gestão.</div>', unsafe_allow_html=True)
+        with c2:
+            legenda_fig(6, "Volume por faixa de taxa", f"R$ milhões por faixa de 0,5 ponto, {idx}")
+            lo, hi = np.floor(d["Taxa"].min() * 2) / 2, np.ceil(d["Taxa"].max() * 2) / 2 + 0.5
+            faixas = pd.cut(d["Taxa"], bins=np.arange(lo, hi + 0.01, 0.5), right=False)
+            hf = d.groupby(faixas, observed=True)["Valor"].sum().reset_index()
+            hf["centro"] = hf["Taxa"].map(lambda b: (b.left + b.right) / 2)
+            hf["faixa"] = hf["Taxa"].map(lambda b: f"{num_br(b.left, 1)}% a {num_br(b.right, 1)}%")
+            hf["mi"] = hf["Valor"] / 1e6
+            fig = px.bar(hf, x="centro", y="mi", color_discrete_sequence=[MID], text=hf["mi"].map(lambda v: num_br(v, 0)), custom_data=["faixa"])
+            fig.update_traces(width=0.42, textposition="outside", cliponaxis=False, hovertemplate="%{customdata[0]}<br>R$ %{y:,.1f} mi<extra></extra>")
+            fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", tickmode="linear", dtick=0.5, ticksuffix="%", tickformat=".1f")
+            fig.update_yaxes(title=None, showticklabels=False, showgrid=False)
+            mostrar(estilo(fig, 320, legenda=False))
+            fonte()
+
+        st.markdown('<div class="h2">Dispersão das taxas</div>', unsafe_allow_html=True)
+        grupos = ["Fundo", "Instrumento"] + (["Segmento"] if tem_seg else [])
+        por = st.radio("Agrupar por", grupos, horizontal=True)
+        tb = dispersao(d, por).round({"Volume": 0, "Mínimo": 2, "Média ponderada": 2, "Mediana": 2, "Máximo": 2})
+        tabela(tb, column_config={
+            "Volume": st.column_config.NumberColumn("Volume (R$)", format="localized"),
+            "Mínimo": st.column_config.NumberColumn("Mínimo (%)", format="localized"),
+            "Média ponderada": st.column_config.NumberColumn("Média ponderada (%)", format="localized"),
+            "Mediana": st.column_config.NumberColumn("Mediana (%)", format="localized"),
+            "Máximo": st.column_config.NumberColumn("Máximo (%)", format="localized"),
+        })
+
+        if d["Duration"].notna().any() or d["Vencimento"].notna().any():
+            legenda_fig(7, "Taxa por prazo", "Cada ponto é um ativo")
+            dd = d.copy()
+            dd["Prazo (anos)"] = dd["Duration"].where(dd["Duration"].notna(), (dd["Vencimento"] - pd.Timestamp.today()).dt.days / 365.25)
+            fig = px.scatter(dd, x="Prazo (anos)", y="Taxa", size="Valor", color="Fundo", color_discrete_sequence=PALETA, hover_name="Ativo", size_max=34)
+            fig.update_yaxes(title=f"Taxa ({idx}, % a.a.)", ticksuffix="%")
+            mostrar(estilo(fig, 380))
+            fonte()
+
+# ---------------------------------------------------------------------------
+# Concentração
+# ---------------------------------------------------------------------------
+with t3:
+    c1, c2 = st.columns([1.2, 1], gap="large")
+    with c1:
+        legenda_fig(8, "Maiores devedores", "Soma de todas as séries e fundos filtrados, R$ milhões")
+        td = df.groupby("Devedor").agg(Valor=("Valor", "sum"), Fundos=("Fundo", "nunique")).sort_values("Valor", ascending=False).head(15).reset_index()
+        td["mi"] = td["Valor"] / 1e6
+        td["rot"] = td.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
+        td["cor"] = np.where(td["Fundos"] > 1, "Em mais de um fundo", "Em um fundo")
+        fig = px.bar(td.iloc[::-1], x="mi", y="Devedor", orientation="h", text="rot", color="cor",
+                     color_discrete_map={"Em um fundo": MID, "Em mais de um fundo": GREEN})
+        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
+        fig.update_xaxes(title=None, showticklabels=False, range=[0, td["mi"].max() * 1.35])
+        fig.update_yaxes(title=None, showgrid=False, categoryorder="total ascending")
+        mostrar(estilo(fig, 520))
+        fonte()
+    with c2:
+        legenda_fig(9, "Curva de concentração", "Volume acumulado pelos devedores, do maior para o menor")
+        cum = (por_dev.cumsum() / total * 100).reset_index(drop=True)
+        cc = pd.DataFrame({"Devedores": np.arange(1, len(cum) + 1), "Acumulado": cum.values})
+        fig = px.area(cc, x="Devedores", y="Acumulado", color_discrete_sequence=[GREEN])
+        fig.update_traces(line=dict(width=2), fillcolor="rgba(18,53,36,0.12)", hovertemplate="%{x} devedores: %{y:.1f}%<extra></extra>")
+        for k in [5, 10]:
+            if k <= len(cc):
+                v = cc.loc[k - 1, "Acumulado"]
+                fig.add_annotation(x=k, y=v, text=f"{k} maiores: {num_br(v, 0)}%", showarrow=True, arrowhead=0, ax=40, ay=30, font=dict(size=12, color=INK))
+        fig.update_yaxes(title=None, ticksuffix="%", range=[0, 102])
+        fig.update_xaxes(title="Número de devedores")
+        mostrar(estilo(fig, 520, legenda=False))
+        fonte()
+
+    st.markdown('<div class="h2">Mesmo devedor em fundos diferentes</div>', unsafe_allow_html=True)
+    mult = df.groupby("Devedor").filter(lambda x: x["Fundo"].nunique() > 1)
+    if mult.empty:
+        st.markdown('<p class="note">Nenhum devedor aparece em mais de um dos fundos filtrados.</p>', unsafe_allow_html=True)
+    else:
+        linhas = []
+        for dev, x in mult.groupby("Devedor"):
+            xc = x[x["Indexador"] == "CDI+"]
+            linhas.append({"Devedor": dev, "Fundos": ", ".join(sorted(x["Fundo"].unique())), "Valor total": x["Valor"].sum(),
+                           "Taxa mínima (CDI+)": xc["Taxa"].min() if len(xc) else np.nan, "Taxa máxima (CDI+)": xc["Taxa"].max() if len(xc) else np.nan,
+                           "Diferença (bps)": (xc["Taxa"].max() - xc["Taxa"].min()) * 100 if len(xc) else np.nan})
+        tm_ = pd.DataFrame(linhas).sort_values("Valor total", ascending=False)
+        tm_ = tm_.astype({"Taxa mínima (CDI+)": float, "Taxa máxima (CDI+)": float, "Diferença (bps)": float}).round({"Valor total": 0, "Taxa mínima (CDI+)": 2, "Taxa máxima (CDI+)": 2, "Diferença (bps)": 0})
+        tabela(tm_, column_config={
+            "Valor total": st.column_config.NumberColumn("Valor total (R$)", format="localized"),
+            "Taxa mínima (CDI+)": st.column_config.NumberColumn("Taxa mínima (CDI + %)", format="localized"),
+            "Taxa máxima (CDI+)": st.column_config.NumberColumn("Taxa máxima (CDI + %)", format="localized"),
+            "Diferença (bps)": st.column_config.NumberColumn(format="localized"),
+        })
+        st.markdown('<p class="note">Diferenças de taxa para o mesmo devedor costumam refletir séries, datas de aquisição ou garantias diferentes. Vale olhar caso a caso.</p>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Comparar fundos
+# ---------------------------------------------------------------------------
+with t4:
+    linhas = []
+    for f, x in df.groupby("Fundo"):
+        dv = x.groupby("Devedor")["Valor"].sum().sort_values(ascending=False)
+        tot = x["Valor"].sum()
+        xc = x[x["Indexador"] == "CDI+"]
+        linhas.append({"Fundo": f, "Volume": tot, "Ativos": len(x), "Devedores": len(dv), "Taxa média CDI+": media_pond(xc),
+                       "Mediana CDI+": xc["Taxa"].median() if len(xc) else None, "Maior devedor": dv.index[0],
+                       "Maior devedor (%)": dv.iloc[0] / tot * 100, "5 maiores (%)": dv.head(5).sum() / tot * 100, "HHI": hhi(dv),
+                       "% em CRA": x.loc[x["Instrumento"] == "CRA", "Valor"].sum() / tot * 100,
+                       "% em CPR-F": x.loc[x["Instrumento"] == "CPR-F", "Valor"].sum() / tot * 100})
+    cf = pd.DataFrame(linhas).sort_values("Volume", ascending=False)
+    cf = cf.astype({"Taxa média CDI+": float, "Mediana CDI+": float}).round({"Volume": 0, "Taxa média CDI+": 2, "Mediana CDI+": 2, "Maior devedor (%)": 1, "5 maiores (%)": 1, "HHI": 0, "% em CRA": 0, "% em CPR-F": 0})
+    tabela(cf, column_config={
+        "Volume": st.column_config.NumberColumn("Volume (R$)", format="localized"),
+        "Taxa média CDI+": st.column_config.NumberColumn("Taxa média (CDI + %)", format="localized"),
+        "Mediana CDI+": st.column_config.NumberColumn("Mediana (CDI + %)", format="localized"),
+        "Maior devedor (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+        "5 maiores (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+        "HHI": st.column_config.NumberColumn("HHI", format="localized", help="Índice Herfindahl-Hirschman por devedor: acima de 1.500 indica concentração moderada; acima de 2.500, alta."),
+        "% em CRA": st.column_config.NumberColumn(format="%.0f%%"), "% em CPR-F": st.column_config.NumberColumn(format="%.0f%%"),
+    })
+    if len(cf) > 1 and cf["Taxa média CDI+"].notna().any():
+        legenda_fig(10, "Taxa e concentração", "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume")
+        fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_sequence=PALETA, size_max=60)
+        fig.update_traces(textposition="top center", hovertemplate="%{text}<br>5 maiores: %{x:.1f}%<br>CDI + %{y:.2f}%<extra></extra>")
+        fig.update_xaxes(title="Participação dos 5 maiores devedores", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
+        fig.update_yaxes(title="Taxa média (CDI + % a.a.)", ticksuffix="%")
+        mostrar(estilo(fig, 420, legenda=False))
+        fonte()
+
+# ---------------------------------------------------------------------------
+# Carteira
+# ---------------------------------------------------------------------------
+with t5:
+    cart = df.copy()
+    cart["% do fundo"] = (cart["Valor"] / cart.groupby("Fundo")["Valor"].transform("sum") * 100).round(2)
+    cart["Valor"] = cart["Valor"].round(2)
+    cart["Taxa"] = [taxa_txt(t, i) for t, i in zip(cart["Taxa"], cart["Indexador"])]
+    cols = ["Fundo", "Ativo", "Devedor", "Codigo", "Instrumento", "Valor", "% do fundo", "Indexador", "Taxa"]
+    cols += [c for c in ["Segmento", "Vencimento", "Duration", "Rating"] if (cart[c].astype(str).str.strip().replace({"NaT": "", "nan": ""}) != "").any()]
+    cart = cart.sort_values(["Fundo", "Valor"], ascending=[True, False])
+    tabela(cart[cols], height=560, column_config={
+        "Codigo": st.column_config.TextColumn("Código"),
+        "Valor": st.column_config.NumberColumn("Valor (R$)", format="localized"),
+        "% do fundo": st.column_config.ProgressColumn("% do fundo", format="%.2f%%", min_value=0, max_value=float(max(10, cart["% do fundo"].max()))),
+        "Vencimento": st.column_config.DateColumn(format="DD/MM/YYYY"),
+    })
+    exp = df.rename(columns={"Codigo": "codigo_ativo", "Taxa": "taxa_aa"}).copy()
+    exp.columns = [norm(c) if c not in ("codigo_ativo", "taxa_aa") else c for c in exp.columns]
+    c1, c2 = st.columns([1, 3])
+    c1.download_button("Exportar CSV (pt-BR)", exp.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                       file_name="carteiras_filtradas.csv", mime="text/csv", type="primary")
+    c2.markdown('<p class="note">Exporta o que está filtrado, com separador ponto e vírgula e vírgula decimal, pronto para o Excel em português.</p>', unsafe_allow_html=True)
