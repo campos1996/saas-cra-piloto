@@ -107,14 +107,8 @@ def num_br(v, dec=0) -> str:
 def brl(v) -> str:
     if v is None or pd.isna(v):
         return "—"
-    a = abs(v)
-    if a >= 1e9:
-        return f"R$ {num_br(v / 1e9, 2)} bi"
-    if a >= 1e6:
-        return f"R$ {num_br(v / 1e6, 1)} mi"
-    if a >= 1e3:
-        return f"R$ {num_br(v / 1e3, 0)} mil"
-    return f"R$ {num_br(v, 0)}"
+    # todos os valores em milhares de reais
+    return f"R$ {num_br(v / 1e3, 0)} mil"
 
 
 def taxa_txt(v, idx="CDI+") -> str:
@@ -277,7 +271,7 @@ def operacoes(d: pd.DataFrame) -> pd.DataFrame:
 def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd.DataFrame:
     v = pd.DataFrame({"#": r["#"], "Operação": r["Ativo"], "Instrumento": r["Instrumento"],
                       "Taxa": [taxa_txt(t, i) for t, i in zip(r["Taxa"], r["Indexador"])],
-                      "Volume": (r["Volume"] / 1e6).round(1), "% do total": (r["Volume"] / total * 100).round(2), "Fundos": r["Fundos"]})
+                      "Volume": (r["Volume"] / 1e3).round(0), "% do total": (r["Volume"] / total * 100).round(2), "Fundos": r["Fundos"]})
     if curto:
         v = v.drop(columns=["Instrumento", "% do total", "Fundos"])
         v["Operação"] = v["Operação"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True)
@@ -293,7 +287,7 @@ def RANK_CFG(total, vmax, idx=None):
         "#": st.column_config.NumberColumn("#", width=32 if COMPACTO else 40),
         "Operação": st.column_config.TextColumn("Operação", width=135 if COMPACTO else "medium"),
         "Taxa": st.column_config.TextColumn("Taxa", width=95 if COMPACTO else None),
-        "Volume": st.column_config.NumberColumn("R$ mi" if COMPACTO else "Volume (R$ mi)", format="localized", width=60 if COMPACTO else None),
+        "Volume": st.column_config.NumberColumn("R$ mil" if COMPACTO else "Volume (R$ mil)", format="localized", width=75 if COMPACTO else None),
         "% do total": st.column_config.NumberColumn("% do total", format="%.2f%%"),
         "Fundos": st.column_config.TextColumn("Fundos", width="medium"),
         "Fundo": st.column_config.TextColumn("Fundo", width=80 if COMPACTO else "small"),
@@ -456,12 +450,12 @@ t1, t2, t3, t4, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Compar
 with t1:
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
-        legenda_fig(1, "Volume por fundo", "R$ milhões")
+        legenda_fig(1, "Volume por fundo", "R$ mil")
         vf = df.groupby("Fundo", as_index=False)["Valor"].sum().sort_values("Valor")
-        vf["mi"] = vf["Valor"] / 1e6
-        vf["rot"] = vf.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 0)}%)", axis=1)
+        vf["mi"] = vf["Valor"] / 1e3
+        vf["rot"] = vf.apply(lambda r: f"{num_br(r['mi'], 0)}  ({num_br(r['Valor'] / total * 100, 0)}%)", axis=1)
         fig = px.bar(vf, x="mi", y="Fundo", orientation="h", text="rot", color_discrete_sequence=[GREEN])
-        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
+        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.0f} mil<extra></extra>")
         fig.update_xaxes(title=None, showticklabels=False, range=[0, vf["mi"].max() * 1.35])
         fig.update_yaxes(title=None, showgrid=False)
         mostrar(estilo(fig, max(220, 60 + 42 * len(vf)), legenda=False))
@@ -507,24 +501,24 @@ with t1:
 
         legenda_fig(3, f"Volume e taxa das operações em {ir}", "Cada ponto é uma operação; as 10 maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
         sc = base.copy()
-        sc["mi"] = sc["Volume"] / 1e6
+        sc["mi"] = sc["Volume"] / 1e3
         top = set(sc.nlargest(5 if COMPACTO else 10, "Volume")["Chave"])
         sc["rotulo"] = np.where(sc["Chave"].isin(top), sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True), "")
         cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#6E7A72"}
         fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=22 if COMPACTO else 40,
                          custom_data=["Ativo", "Fundos", "Taxa", "mi"])
         fig.update_traces(textposition="top center", textfont=dict(size=9.5 if COMPACTO else 11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
-                          hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.1f} mi<extra></extra>")
+                          hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.0f} mil<extra></extra>")
         fig.add_vline(x=float(sc["Taxa"].median()), line=dict(color=MUTED, width=1, dash="dash"))
         fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
-        fig.update_yaxes(title="Volume (R$ milhões)")
+        fig.update_yaxes(title="Volume (R$ mil)")
         mostrar(estilo(fig, 460))
         fonte()
 
     if tem_venc and df["Vencimento"].notna().any():
-        legenda_fig(4, "Vencimentos por ano", "R$ milhões")
+        legenda_fig(4, "Vencimentos por ano", "R$ mil")
         vv = df[df["Vencimento"].notna()].assign(Ano=lambda x: x["Vencimento"].dt.year).groupby(["Ano", "Fundo"], as_index=False)["Valor"].sum()
-        vv["mi"] = vv["Valor"] / 1e6
+        vv["mi"] = vv["Valor"] / 1e3
         fig = px.bar(vv, x="Ano", y="mi", color="Fundo", color_discrete_sequence=PALETA)
         fig.update_xaxes(title=None, dtick=1)
         fig.update_yaxes(title=None)
@@ -558,15 +552,15 @@ with t2:
             mostrar(estilo(fig, max(260, 90 + 70 * d["Fundo"].nunique()), legenda=False))
             st.markdown('<div class="src">Traço preto: média ponderada do fundo. Fonte: carteiras informadas nos relatórios de gestão.</div>', unsafe_allow_html=True)
         with c2:
-            legenda_fig(6, "Volume por faixa de taxa", f"R$ milhões por faixa de 0,5 ponto, {idx}")
+            legenda_fig(6, "Volume por faixa de taxa", f"R$ mil por faixa de 0,5 ponto, {idx}")
             lo, hi = np.floor(d["Taxa"].min() * 2) / 2, np.ceil(d["Taxa"].max() * 2) / 2 + 0.5
             faixas = pd.cut(d["Taxa"], bins=np.arange(lo, hi + 0.01, 0.5), right=False)
             hf = d.groupby(faixas, observed=True)["Valor"].sum().reset_index()
             hf["centro"] = hf["Taxa"].map(lambda b: (b.left + b.right) / 2)
             hf["faixa"] = hf["Taxa"].map(lambda b: f"{num_br(b.left, 1)}% a {num_br(b.right, 1)}%")
-            hf["mi"] = hf["Valor"] / 1e6
+            hf["mi"] = hf["Valor"] / 1e3
             fig = px.bar(hf, x="centro", y="mi", color_discrete_sequence=[MID], text=hf["mi"].map(lambda v: num_br(v, 0)), custom_data=["faixa"])
-            fig.update_traces(width=0.42, textposition="outside", cliponaxis=False, hovertemplate="%{customdata[0]}<br>R$ %{y:,.1f} mi<extra></extra>")
+            fig.update_traces(width=0.42, textposition="outside", cliponaxis=False, hovertemplate="%{customdata[0]}<br>R$ %{y:,.0f} mil<extra></extra>")
             fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", tickmode="linear", dtick=1 if COMPACTO else 0.5, ticksuffix="%", tickformat=".0f" if COMPACTO else ".1f")
             fig.update_yaxes(title=None, showticklabels=False, showgrid=False)
             mostrar(estilo(fig, 320, legenda=False))
@@ -587,12 +581,12 @@ with t2:
             st.markdown(f'<div class="figt" style="margin-top:16px">{ix}: {nome.lower()}</div>'
                         f'<div class="figs">{len(di)} ativos, {brl(di["Valor"].sum())} em carteira. Valores em {un} ao ano</div>', unsafe_allow_html=True)
             tb = dispersao(di, por)
-            tb["Volume"] = tb["Volume"] / 1e6
-            tb = tb.round({"Volume": 1, "Mínimo": 2, "Média ponderada": 2, "Mediana": 2, "Máximo": 2})
+            tb["Volume"] = tb["Volume"] / 1e3
+            tb = tb.round({"Volume": 0, "Mínimo": 2, "Média ponderada": 2, "Mediana": 2, "Máximo": 2})
             if COMPACTO:
                 tb = tb[[por, "Ativos", "Média ponderada", "Mediana"]]
             tabela(tb, column_config={
-                "Volume": st.column_config.NumberColumn("Volume (R$ mi)", format="localized"),
+                "Volume": st.column_config.NumberColumn("Volume (R$ mil)", format="localized"),
                 "Mínimo": st.column_config.NumberColumn(f"Mínimo ({un})", format="localized"),
                 "Média ponderada": st.column_config.NumberColumn(f"Média ponderada ({un})", format="localized"),
                 "Mediana": st.column_config.NumberColumn(f"Mediana ({un})", format="localized"),
@@ -615,14 +609,14 @@ with t2:
 with t3:
     c1, c2 = st.columns([1.2, 1], gap="large")
     with c1:
-        legenda_fig(8, "Maiores devedores", "Soma de todas as séries e fundos filtrados, R$ milhões")
+        legenda_fig(8, "Maiores devedores", "Soma de todas as séries e fundos filtrados, R$ mil")
         td = df.groupby("Devedor").agg(Valor=("Valor", "sum"), Fundos=("Fundo", "nunique")).sort_values("Valor", ascending=False).head(10 if COMPACTO else 15).reset_index()
-        td["mi"] = td["Valor"] / 1e6
-        td["rot"] = td.apply(lambda r: f"{num_br(r['Valor'] / total * 100, 1)}%" if COMPACTO else f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
+        td["mi"] = td["Valor"] / 1e3
+        td["rot"] = td.apply(lambda r: f"{num_br(r['Valor'] / total * 100, 1)}%" if COMPACTO else f"{num_br(r['mi'], 0)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
         td["cor"] = np.where(td["Fundos"] > 1, "Em mais de um fundo", "Em um fundo")
         fig = px.bar(td.iloc[::-1], x="mi", y="Devedor", orientation="h", text="rot", color="cor",
                      color_discrete_map={"Em um fundo": MID, "Em mais de um fundo": GREEN})
-        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
+        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.0f} mil<extra></extra>")
         fig.update_xaxes(title=None, showticklabels=False, range=[0, td["mi"].max() * 1.35])
         fig.update_yaxes(title=None, showgrid=False, categoryorder="total ascending")
         mostrar(estilo(fig, 520))
@@ -655,13 +649,14 @@ with t3:
                            "Diferença (bps)": (xc["Taxa"].max() - xc["Taxa"].min()) * 100 if len(xc) else np.nan})
         tm_ = pd.DataFrame(linhas).sort_values("Valor total", ascending=False)
         tm_["Nº de fundos"] = tm_["Fundos"].str.count(",") + 1
+        tm_["Valor total"] = tm_["Valor total"] / 1e3
         tm_ = tm_.astype({"Taxa mínima (CDI+)": float, "Taxa máxima (CDI+)": float, "Diferença (bps)": float}).round({"Valor total": 0, "Taxa mínima (CDI+)": 2, "Taxa máxima (CDI+)": 2, "Diferença (bps)": 0})
         if COMPACTO:
             tm_ = tm_[["Devedor", "Nº de fundos", "Diferença (bps)"]]
         else:
             tm_ = tm_.drop(columns=["Nº de fundos"])
         tabela(tm_, column_config={
-            "Valor total": st.column_config.NumberColumn("Valor total (R$)", format="localized"),
+            "Valor total": st.column_config.NumberColumn("Valor total (R$ mil)", format="localized"),
             "Taxa mínima (CDI+)": st.column_config.NumberColumn("Taxa mínima (CDI + %)", format="localized"),
             "Taxa máxima (CDI+)": st.column_config.NumberColumn("Taxa máxima (CDI + %)", format="localized"),
             "Diferença (bps)": st.column_config.NumberColumn(format="localized"),
@@ -685,11 +680,11 @@ with t4:
     cf = pd.DataFrame(linhas).sort_values("Volume", ascending=False)
     cf = cf.astype({"Taxa média CDI+": float, "Mediana CDI+": float}).round({"Volume": 0, "Taxa média CDI+": 2, "Mediana CDI+": 2, "Maior devedor (%)": 1, "5 maiores (%)": 1, "HHI": 0, "% em CRA": 0, "% em CPR-F": 0})
     cf_v = cf.copy()
+    cf_v["Volume"] = (cf_v["Volume"] / 1e3).round(0)
     if COMPACTO:
-        cf_v["Volume"] = (cf_v["Volume"] / 1e6).round(1)
         cf_v = cf_v[["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]]
     tabela(cf_v, column_config={
-        "Volume": st.column_config.NumberColumn("Volume (R$ mi)" if COMPACTO else "Volume (R$)", format="localized"),
+        "Volume": st.column_config.NumberColumn("Volume (R$ mil)", format="localized"),
         "Taxa média CDI+": st.column_config.NumberColumn("Taxa média (CDI + %)", format="localized"),
         "Mediana CDI+": st.column_config.NumberColumn("Mediana (CDI + %)", format="localized"),
         "Maior devedor (%)": st.column_config.NumberColumn(format="%.1f%%"),
@@ -717,12 +712,12 @@ with t5:
     cols = ["Fundo", "Ativo", "Devedor", "Codigo", "Instrumento", "Valor", "% do fundo", "Indexador", "Taxa"]
     cols += [c for c in ["Segmento", "Vencimento", "Duration", "Rating"] if (cart[c].astype(str).str.strip().replace({"NaT": "", "nan": ""}) != "").any()]
     cart = cart.sort_values(["Fundo", "Valor"], ascending=[True, False])
+    cart["Valor"] = (cart["Valor"] / 1e3).round(0)
     if COMPACTO:
-        cart["Valor"] = (cart["Valor"] / 1e6).round(2)
         cols = ["Fundo", "Ativo", "Valor", "Taxa"]
     tabela(cart[cols], height=460 if COMPACTO else 560, column_config={
         "Codigo": st.column_config.TextColumn("Código"),
-        "Valor": st.column_config.NumberColumn("Valor (R$ mi)" if COMPACTO else "Valor (R$)", format="localized"),
+        "Valor": st.column_config.NumberColumn("Valor (R$ mil)", format="localized"),
         "% do fundo": st.column_config.NumberColumn("% do fundo", format="%.2f%%"),
         "Vencimento": st.column_config.DateColumn(format="DD/MM/YYYY"),
     })
