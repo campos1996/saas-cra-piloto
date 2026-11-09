@@ -276,7 +276,8 @@ def operacoes(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd.DataFrame:
-    v = pd.DataFrame({"#": r["#"], "Operação": r["Ativo"], "Instrumento": r["Instrumento"],
+    cod = r["Codigo"].astype(str).str.strip().replace({"": "—", "nan": "—", "None": "—"})
+    v = pd.DataFrame({"#": r["#"], "Operação": r["Ativo"], "Código": cod, "Instrumento": r["Instrumento"],
                       "Taxa": [taxa_txt(t, i) for t, i in zip(r["Taxa"], r["Indexador"])],
                       "Volume": (r["Volume"] / 1e3).round(0), "% do total": (r["Volume"] / total * 100).round(2), "Fundos": r["Fundos"]})
     if curto:
@@ -285,7 +286,7 @@ def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd
     if com_fundo:
         # rankings de taxa: o fundo que detém a operação no lugar da numeração
         v = v.drop(columns=[c for c in ["#", "Fundos"] if c in v.columns])
-        v.insert(1, "Fundo", r["Fundos"].values)
+        v.insert(2, "Fundo", r["Fundos"].values)
     return v
 
 
@@ -298,6 +299,7 @@ def RANK_CFG(total, vmax, idx=None):
         "% do total": st.column_config.NumberColumn("% do total", format="%.2f%%"),
         "Fundos": st.column_config.TextColumn("Fundos", width="medium"),
         "Fundo": st.column_config.TextColumn("Fundo", width=80 if COMPACTO else "small"),
+        "Código": st.column_config.TextColumn("Código", width=105 if COMPACTO else "small"),
     }
 
 
@@ -651,7 +653,8 @@ with t3:
         linhas = []
         for dev, x in mult.groupby("Devedor"):
             xc = x[x["Indexador"] == "CDI+"]
-            linhas.append({"Devedor": dev, "Fundos": ", ".join(sorted(x["Fundo"].unique())), "Valor total": x["Valor"].sum(),
+            cods = sorted(c for c in x["Codigo"].astype(str).unique() if c and c.lower() not in ("nan", "none", "-"))
+            linhas.append({"Devedor": dev, "Códigos": ", ".join(cods) if cods else "—", "Fundos": ", ".join(sorted(x["Fundo"].unique())), "Valor total": x["Valor"].sum(),
                            "Taxa mínima (CDI+)": xc["Taxa"].min() if len(xc) else np.nan, "Taxa máxima (CDI+)": xc["Taxa"].max() if len(xc) else np.nan,
                            "Diferença (bps)": (xc["Taxa"].max() - xc["Taxa"].min()) * 100 if len(xc) else np.nan})
         tm_ = pd.DataFrame(linhas).sort_values("Valor total", ascending=False)
@@ -659,7 +662,7 @@ with t3:
         tm_["Valor total"] = tm_["Valor total"] / 1e3
         tm_ = tm_.astype({"Taxa mínima (CDI+)": float, "Taxa máxima (CDI+)": float, "Diferença (bps)": float}).round({"Valor total": 0, "Taxa mínima (CDI+)": 2, "Taxa máxima (CDI+)": 2, "Diferença (bps)": 0})
         if COMPACTO:
-            tm_ = tm_[["Devedor", "Nº de fundos", "Diferença (bps)"]]
+            tm_ = tm_[["Devedor", "Códigos", "Nº de fundos", "Diferença (bps)"]]
         else:
             tm_ = tm_.drop(columns=["Nº de fundos"])
         tabela(tm_, column_config={
@@ -721,7 +724,7 @@ with t5:
     cart = cart.sort_values(["Fundo", "Valor"], ascending=[True, False])
     cart["Valor"] = (cart["Valor"] / 1e3).round(0)
     if COMPACTO:
-        cols = ["Fundo", "Ativo", "Valor", "Taxa"]
+        cols = ["Fundo", "Ativo", "Codigo", "Valor", "Taxa"]
     tabela(cart[cols], height=460 if COMPACTO else 560, column_config={
         "Codigo": st.column_config.TextColumn("Código"),
         "Valor": st.column_config.NumberColumn("Valor (R$ mil)", format="localized"),
