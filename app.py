@@ -5,7 +5,7 @@ import streamlit as st
 st.set_page_config(
     page_title="Monitor de Crédito", layout="wide"
 )
-st.title("📊 Monitor de Ativos de Crédito Privado (CRA)")
+st.title("📊 Monitor de Ativos de Crédito")
 st.write("Painel analítico conectado à base de dados em Excel.")
 
 
