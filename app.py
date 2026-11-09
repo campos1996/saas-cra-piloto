@@ -20,7 +20,7 @@ try:
     col1, col2, col3 = st.columns(3)
     col1.metric("Valor Total Alocado", f"R$ {df['Valor'].sum():,.2f}")
     col2.metric("Quantidade de Ativos", len(df))
-    col3.metric("Coupon Médio", f"{df['Coupon'].mean():,.2f}% a.a.")
+    col3.metric("Cupom Médio", f"{df['Cupom'].mean():,.2f}% a.a.")
 
     # Tabela interativa com os dados reais da planilha
     st.dataframe(df, use_container_width=True)
