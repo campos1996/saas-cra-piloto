@@ -24,6 +24,17 @@ st.set_page_config(page_title="Monitor de Crédito - Taxas e Volume Financeiro",
 
 ARQUIVO = "carteira_ativos.xlsx"
 
+
+def _eh_celular() -> bool:
+    try:
+        ua = st.context.headers.get("User-Agent", "") or ""
+    except Exception:
+        ua = ""
+    return any(k in ua for k in ("iPhone", "Android", "Mobile", "iPad"))
+
+
+COMPACTO = _eh_celular()
+
 GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#123524", "#5F8B7A", "#A8721A", "#1E2B26", "#6B776F", "#D6DED9", "#9B1C1C"
 PALETA = [GREEN, MID, GOLD, "#4F63A0", "#8C4F3A", "#9DBBA9", "#6E7A72", "#C9A24A", "#2F5A3E"]
 
@@ -45,6 +56,21 @@ html, body, .stApp, .stMarkdown, button, input, select {{ font-family: 'IBM Plex
 .kpi .n {{ font-size: 12px; color: {MUTED}; }}
 .kpi .v.alert {{ color: {RED}; }}
 @media (max-width: 1000px) {{ .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }} }}
+.tg-t {{ font-size: 30px; font-weight: 600; color: {GREEN}; line-height: 1.2; }}
+.tg-m {{ font-size: 14px; color: {MUTED}; margin-top: 6px; }}
+@media (max-width: 640px) {{
+  .block-container {{ padding: 2.6rem 0.9rem 2rem; }}
+  .tg-t {{ font-size: 21px; }}
+  .tg-m {{ font-size: 12.5px; }}
+  .kpi {{ padding: 9px 8px 9px 0; }}
+  .kpi .v {{ font-size: 17px; white-space: normal; }}
+  .kpi .l, .kpi .n {{ font-size: 11px; }}
+  .lead {{ font-size: 14.5px; line-height: 1.6; }}
+  .figt {{ font-size: 14px; }}
+  .figs, .note {{ font-size: 12px; }}
+  .h2 {{ font-size: 17px; margin-top: 20px; }}
+  div[data-testid="stTabs"] button p {{ font-size: 13.5px; }}
+}}
 .lead {{ font-size: 16px; line-height: 1.65; color: {INK}; max-width: 900px; margin: 0 0 6px; }}
 .fig {{ font-size: 11.5px; font-weight: 700; color: {MID}; margin-top: 14px; }}
 .figt {{ font-size: 15px; font-weight: 600; color: {INK}; }}
@@ -248,22 +274,29 @@ def operacoes(d: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
-def rank_view(r: pd.DataFrame, total: float, curto=False) -> pd.DataFrame:
+def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd.DataFrame:
     v = pd.DataFrame({"#": r["#"], "Operação": r["Ativo"], "Instrumento": r["Instrumento"],
                       "Taxa": [taxa_txt(t, i) for t, i in zip(r["Taxa"], r["Indexador"])],
                       "Volume": (r["Volume"] / 1e6).round(1), "% do total": (r["Volume"] / total * 100).round(2), "Fundos": r["Fundos"]})
     if curto:
         v = v.drop(columns=["Instrumento", "% do total", "Fundos"])
+        v["Operação"] = v["Operação"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True)
+    if com_fundo:
+        # rankings de taxa: o fundo que detém a operação no lugar da numeração
+        v = v.drop(columns=[c for c in ["#", "Instrumento", "% do total", "Fundos"] if c in v.columns])
+        v.insert(0, "Fundo", r["Fundos"].values)
     return v
 
 
 def RANK_CFG(total, vmax, idx=None):
     return {
-        "#": st.column_config.NumberColumn("#", width="small"),
-        "Operação": st.column_config.TextColumn("Operação", width="medium"),
-        "Volume": st.column_config.NumberColumn("Volume (R$ mi)", format="localized"),
+        "#": st.column_config.NumberColumn("#", width=32 if COMPACTO else 40),
+        "Operação": st.column_config.TextColumn("Operação", width=135 if COMPACTO else "medium"),
+        "Taxa": st.column_config.TextColumn("Taxa", width=95 if COMPACTO else None),
+        "Volume": st.column_config.NumberColumn("R$ mi" if COMPACTO else "Volume (R$ mi)", format="localized", width=60 if COMPACTO else None),
         "% do total": st.column_config.NumberColumn("% do total", format="%.2f%%"),
         "Fundos": st.column_config.TextColumn("Fundos", width="medium"),
+        "Fundo": st.column_config.TextColumn("Fundo", width=80 if COMPACTO else "small"),
     }
 
 
@@ -273,15 +306,17 @@ def hhi(valores: pd.Series) -> float:
 
 
 def estilo(fig, altura=380, legenda=True):
+    if COMPACTO:
+        altura = max(260, int(altura * 0.75))
     fig.update_layout(
-        template="simple_white", height=altura, separators=",.", margin=dict(l=8, r=16, t=10, b=8),
-        font=dict(family="IBM Plex Sans, Segoe UI, sans-serif", size=13, color=INK),
+        template="simple_white", height=altura, separators=",.", margin=dict(l=4, r=8, t=10, b=4) if COMPACTO else dict(l=8, r=16, t=10, b=8),
+        font=dict(family="IBM Plex Sans, Segoe UI, sans-serif", size=11 if COMPACTO else 13, color=INK), dragmode=False,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=legenda,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title=None),
         hoverlabel=dict(bgcolor="white", font_size=13),
     )
-    fig.update_xaxes(showgrid=False, linecolor=LINE, tickfont=dict(color=MUTED))
-    fig.update_yaxes(showgrid=True, gridcolor="#E8EDEA", linecolor=LINE, tickfont=dict(color=MUTED))
+    fig.update_xaxes(showgrid=False, linecolor=LINE, tickfont=dict(color=MUTED), fixedrange=True)
+    fig.update_yaxes(showgrid=True, gridcolor="#E8EDEA", linecolor=LINE, tickfont=dict(color=MUTED), fixedrange=True)
     return fig
 
 
@@ -350,6 +385,7 @@ with st.sidebar:
         seg_disp = sorted(s for s in df_all["Segmento"].unique() if s)
         segs = st.multiselect("Segmento", seg_disp, default=seg_disp)
     busca = st.text_input("Buscar ativo, devedor ou código")
+    COMPACTO = st.toggle("Modo celular (tabelas e gráficos enxutos)", value=COMPACTO, help="Ligado automaticamente quando o app é aberto no celular.")
     st.markdown("---")
     with st.expander("Como enriquecer a planilha"):
         st.markdown(
@@ -373,8 +409,8 @@ tem_venc = df["Vencimento"].notna().any() or df["Duration"].notna().any()
 # ---------------------------------------------------------------------------
 st.markdown(
     f'<div style="border-bottom:1px solid {LINE}; padding-bottom:14px; margin-bottom:20px;">'
-    f'<div style="font-size:30px; font-weight:600; color:{GREEN}; line-height:1.2;">Monitor de Crédito - Taxas e Volume Financeiro</div>'
-    f'<div style="font-size:14px; color:{MUTED}; margin-top:6px;">TeraAg &nbsp;|&nbsp; {df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</div>'
+    f'<div class="tg-t">Monitor de Crédito - Taxas e Volume Financeiro</div>'
+    f'<div class="tg-m">TeraAg &nbsp;|&nbsp; {df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</div>'
     '</div>', unsafe_allow_html=True)
 
 if df.empty:
@@ -409,6 +445,8 @@ frases.append(f"O maior devedor é {maior_dev}, com {num_br(maior_pct, 1)}% do v
 if n_cruz:
     frases.append(f"{n_cruz} devedor(es) aparecem em mais de um fundo.")
 st.markdown(f'<p class="lead">{" ".join(frases)}</p>', unsafe_allow_html=True)
+if COMPACTO:
+    st.caption("Filtros de fundo, indexador e instrumento ficam no menu (seta › no canto superior esquerdo).")
 
 t1, t2, t3, t4, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Comparar fundos", "Carteira"])
 
@@ -446,12 +484,12 @@ with t1:
     st.markdown('<p class="note">Cada operação reúne o mesmo ativo em todos os fundos filtrados (pelo código; sem código, pelo nome). '
                 'Volume é a soma das posições; taxa é a média ponderada pelo volume.</p>', unsafe_allow_html=True)
     ops = operacoes(df)
-    n_rank = st.select_slider("Tamanho dos rankings", options=[10, 15, 20, 30], value=15)
+    n_rank = st.select_slider("Tamanho dos rankings", options=[5, 10, 15, 20, 30], value=10 if COMPACTO else 15)
 
     st.markdown(f'<div class="figt">Maiores operações por volume</div><div class="figs">Top {n_rank}, todas as taxas e indexadores</div>', unsafe_allow_html=True)
     rv = ops.sort_values("Volume", ascending=False).head(n_rank).reset_index(drop=True)
     rv.insert(0, "#", range(1, len(rv) + 1))
-    tabela(rank_view(rv, total), column_config=RANK_CFG(total, rv["Volume"].max()), height=38 + 35 * len(rv))
+    tabela(rank_view(rv, total, curto=COMPACTO), column_config=RANK_CFG(total, rv["Volume"].max()), height=38 + 35 * len(rv))
     fonte()
 
     idx_rank = [i for i in ["CDI+", "IPCA+", "%CDI", "Pré"] if (ops["Indexador"] == i).any()]
@@ -464,18 +502,18 @@ with t1:
                 rt = base.sort_values(["Taxa", "Volume"], ascending=[asc, False]).head(n_rank).reset_index(drop=True)
                 rt.insert(0, "#", range(1, len(rt) + 1))
                 st.markdown(f'<div class="figt">{titulo} em {ir}</div><div class="figs">Top {min(n_rank, len(rt))} operações</div>', unsafe_allow_html=True)
-                tabela(rank_view(rt, total, curto=True), column_config=RANK_CFG(total, max(1, base["Volume"].max()), idx=ir), height=38 + 35 * len(rt))
+                tabela(rank_view(rt, total, curto=True, com_fundo=True), column_config=RANK_CFG(total, max(1, base["Volume"].max()), idx=ir), height=38 + 35 * len(rt))
         fonte()
 
         legenda_fig(3, f"Volume e taxa das operações em {ir}", "Cada ponto é uma operação; as 10 maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
         sc = base.copy()
         sc["mi"] = sc["Volume"] / 1e6
-        top = set(sc.nlargest(10, "Volume")["Chave"])
+        top = set(sc.nlargest(5 if COMPACTO else 10, "Volume")["Chave"])
         sc["rotulo"] = np.where(sc["Chave"].isin(top), sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True), "")
         cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#6E7A72"}
-        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=40,
+        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=22 if COMPACTO else 40,
                          custom_data=["Ativo", "Fundos", "Taxa", "mi"])
-        fig.update_traces(textposition="top center", textfont=dict(size=11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
+        fig.update_traces(textposition="top center", textfont=dict(size=9.5 if COMPACTO else 11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
                           hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.1f} mi<extra></extra>")
         fig.add_vline(x=float(sc["Taxa"].median()), line=dict(color=MUTED, width=1, dash="dash"))
         fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
@@ -529,22 +567,38 @@ with t2:
             hf["mi"] = hf["Valor"] / 1e6
             fig = px.bar(hf, x="centro", y="mi", color_discrete_sequence=[MID], text=hf["mi"].map(lambda v: num_br(v, 0)), custom_data=["faixa"])
             fig.update_traces(width=0.42, textposition="outside", cliponaxis=False, hovertemplate="%{customdata[0]}<br>R$ %{y:,.1f} mi<extra></extra>")
-            fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", tickmode="linear", dtick=0.5, ticksuffix="%", tickformat=".1f")
+            fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", tickmode="linear", dtick=1 if COMPACTO else 0.5, ticksuffix="%", tickformat=".0f" if COMPACTO else ".1f")
             fig.update_yaxes(title=None, showticklabels=False, showgrid=False)
             mostrar(estilo(fig, 320, legenda=False))
             fonte()
 
-        st.markdown('<div class="h2">Dispersão das taxas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="h2">Dispersão das taxas, por indexador</div>', unsafe_allow_html=True)
+        st.markdown('<p class="note">Cada indexador tem sua própria tabela: spread sobre o CDI, juro real sobre o IPCA, percentual do CDI e taxa prefixada '
+                    'não são comparáveis entre si. Médias ponderadas pelo valor em carteira.</p>', unsafe_allow_html=True)
         grupos = ["Fundo", "Instrumento"] + (["Segmento"] if tem_seg else [])
         por = st.radio("Agrupar por", grupos, horizontal=True)
-        tb = dispersao(d, por).round({"Volume": 0, "Mínimo": 2, "Média ponderada": 2, "Mediana": 2, "Máximo": 2})
-        tabela(tb, column_config={
-            "Volume": st.column_config.NumberColumn("Volume (R$)", format="localized"),
-            "Mínimo": st.column_config.NumberColumn("Mínimo (%)", format="localized"),
-            "Média ponderada": st.column_config.NumberColumn("Média ponderada (%)", format="localized"),
-            "Mediana": st.column_config.NumberColumn("Mediana (%)", format="localized"),
-            "Máximo": st.column_config.NumberColumn("Máximo (%)", format="localized"),
-        })
+        UNID = {"CDI+": ("Spread sobre o CDI", "CDI + %"), "IPCA+": ("Juro real sobre o IPCA", "IPCA + %"),
+                "%CDI": ("Percentual do CDI", "% do CDI"), "Pré": ("Taxa prefixada", "% a.a.")}
+        for ix in idx_ok:
+            di = df[(df["Indexador"] == ix) & df["Taxa"].notna()]
+            if di.empty:
+                continue
+            nome, un = UNID.get(ix, (ix, "%"))
+            st.markdown(f'<div class="figt" style="margin-top:16px">{ix}: {nome.lower()}</div>'
+                        f'<div class="figs">{len(di)} ativos, {brl(di["Valor"].sum())} em carteira. Valores em {un} ao ano</div>', unsafe_allow_html=True)
+            tb = dispersao(di, por)
+            tb["Volume"] = tb["Volume"] / 1e6
+            tb = tb.round({"Volume": 1, "Mínimo": 2, "Média ponderada": 2, "Mediana": 2, "Máximo": 2})
+            if COMPACTO:
+                tb = tb[[por, "Ativos", "Média ponderada", "Mediana"]]
+            tabela(tb, column_config={
+                "Volume": st.column_config.NumberColumn("Volume (R$ mi)", format="localized"),
+                "Mínimo": st.column_config.NumberColumn(f"Mínimo ({un})", format="localized"),
+                "Média ponderada": st.column_config.NumberColumn(f"Média ponderada ({un})", format="localized"),
+                "Mediana": st.column_config.NumberColumn(f"Mediana ({un})", format="localized"),
+                "Máximo": st.column_config.NumberColumn(f"Máximo ({un})", format="localized"),
+            })
+        fonte()
 
         if d["Duration"].notna().any() or d["Vencimento"].notna().any():
             legenda_fig(7, "Taxa por prazo", "Cada ponto é um ativo")
@@ -562,9 +616,9 @@ with t3:
     c1, c2 = st.columns([1.2, 1], gap="large")
     with c1:
         legenda_fig(8, "Maiores devedores", "Soma de todas as séries e fundos filtrados, R$ milhões")
-        td = df.groupby("Devedor").agg(Valor=("Valor", "sum"), Fundos=("Fundo", "nunique")).sort_values("Valor", ascending=False).head(15).reset_index()
+        td = df.groupby("Devedor").agg(Valor=("Valor", "sum"), Fundos=("Fundo", "nunique")).sort_values("Valor", ascending=False).head(10 if COMPACTO else 15).reset_index()
         td["mi"] = td["Valor"] / 1e6
-        td["rot"] = td.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
+        td["rot"] = td.apply(lambda r: f"{num_br(r['Valor'] / total * 100, 1)}%" if COMPACTO else f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
         td["cor"] = np.where(td["Fundos"] > 1, "Em mais de um fundo", "Em um fundo")
         fig = px.bar(td.iloc[::-1], x="mi", y="Devedor", orientation="h", text="rot", color="cor",
                      color_discrete_map={"Em um fundo": MID, "Em mais de um fundo": GREEN})
@@ -600,7 +654,12 @@ with t3:
                            "Taxa mínima (CDI+)": xc["Taxa"].min() if len(xc) else np.nan, "Taxa máxima (CDI+)": xc["Taxa"].max() if len(xc) else np.nan,
                            "Diferença (bps)": (xc["Taxa"].max() - xc["Taxa"].min()) * 100 if len(xc) else np.nan})
         tm_ = pd.DataFrame(linhas).sort_values("Valor total", ascending=False)
+        tm_["Nº de fundos"] = tm_["Fundos"].str.count(",") + 1
         tm_ = tm_.astype({"Taxa mínima (CDI+)": float, "Taxa máxima (CDI+)": float, "Diferença (bps)": float}).round({"Valor total": 0, "Taxa mínima (CDI+)": 2, "Taxa máxima (CDI+)": 2, "Diferença (bps)": 0})
+        if COMPACTO:
+            tm_ = tm_[["Devedor", "Nº de fundos", "Diferença (bps)"]]
+        else:
+            tm_ = tm_.drop(columns=["Nº de fundos"])
         tabela(tm_, column_config={
             "Valor total": st.column_config.NumberColumn("Valor total (R$)", format="localized"),
             "Taxa mínima (CDI+)": st.column_config.NumberColumn("Taxa mínima (CDI + %)", format="localized"),
@@ -625,18 +684,22 @@ with t4:
                        "% em CPR-F": x.loc[x["Instrumento"] == "CPR-F", "Valor"].sum() / tot * 100})
     cf = pd.DataFrame(linhas).sort_values("Volume", ascending=False)
     cf = cf.astype({"Taxa média CDI+": float, "Mediana CDI+": float}).round({"Volume": 0, "Taxa média CDI+": 2, "Mediana CDI+": 2, "Maior devedor (%)": 1, "5 maiores (%)": 1, "HHI": 0, "% em CRA": 0, "% em CPR-F": 0})
-    tabela(cf, column_config={
-        "Volume": st.column_config.NumberColumn("Volume (R$)", format="localized"),
+    cf_v = cf.copy()
+    if COMPACTO:
+        cf_v["Volume"] = (cf_v["Volume"] / 1e6).round(1)
+        cf_v = cf_v[["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]]
+    tabela(cf_v, column_config={
+        "Volume": st.column_config.NumberColumn("Volume (R$ mi)" if COMPACTO else "Volume (R$)", format="localized"),
         "Taxa média CDI+": st.column_config.NumberColumn("Taxa média (CDI + %)", format="localized"),
         "Mediana CDI+": st.column_config.NumberColumn("Mediana (CDI + %)", format="localized"),
-        "Maior devedor (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
-        "5 maiores (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
+        "Maior devedor (%)": st.column_config.NumberColumn(format="%.1f%%"),
+        "5 maiores (%)": st.column_config.NumberColumn("5 maiores devedores", format="%.1f%%"),
         "HHI": st.column_config.NumberColumn("HHI", format="localized", help="Índice Herfindahl-Hirschman por devedor: acima de 1.500 indica concentração moderada; acima de 2.500, alta."),
         "% em CRA": st.column_config.NumberColumn(format="%.0f%%"), "% em CPR-F": st.column_config.NumberColumn(format="%.0f%%"),
     })
     if len(cf) > 1 and cf["Taxa média CDI+"].notna().any():
         legenda_fig(10, "Taxa e concentração", "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume")
-        fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_sequence=PALETA, size_max=60)
+        fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_sequence=PALETA, size_max=30 if COMPACTO else 60)
         fig.update_traces(textposition="top center", hovertemplate="%{text}<br>5 maiores: %{x:.1f}%<br>CDI + %{y:.2f}%<extra></extra>")
         fig.update_xaxes(title="Participação dos 5 maiores devedores", ticksuffix="%", showgrid=True, gridcolor="#E8EDEA")
         fig.update_yaxes(title="Taxa média (CDI + % a.a.)", ticksuffix="%")
@@ -654,10 +717,13 @@ with t5:
     cols = ["Fundo", "Ativo", "Devedor", "Codigo", "Instrumento", "Valor", "% do fundo", "Indexador", "Taxa"]
     cols += [c for c in ["Segmento", "Vencimento", "Duration", "Rating"] if (cart[c].astype(str).str.strip().replace({"NaT": "", "nan": ""}) != "").any()]
     cart = cart.sort_values(["Fundo", "Valor"], ascending=[True, False])
-    tabela(cart[cols], height=560, column_config={
+    if COMPACTO:
+        cart["Valor"] = (cart["Valor"] / 1e6).round(2)
+        cols = ["Fundo", "Ativo", "Valor", "Taxa"]
+    tabela(cart[cols], height=460 if COMPACTO else 560, column_config={
         "Codigo": st.column_config.TextColumn("Código"),
-        "Valor": st.column_config.NumberColumn("Valor (R$)", format="localized"),
-        "% do fundo": st.column_config.ProgressColumn("% do fundo", format="%.2f%%", min_value=0, max_value=float(max(10, cart["% do fundo"].max()))),
+        "Valor": st.column_config.NumberColumn("Valor (R$ mi)" if COMPACTO else "Valor (R$)", format="localized"),
+        "% do fundo": st.column_config.NumberColumn("% do fundo", format="%.2f%%"),
         "Vencimento": st.column_config.DateColumn(format="DD/MM/YYYY"),
     })
     exp = df.rename(columns={"Codigo": "codigo_ativo", "Taxa": "taxa_aa"}).copy()
