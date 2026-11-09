@@ -283,7 +283,7 @@ def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd
         v["Operação"] = v["Operação"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True)
     if com_fundo:
         # rankings de taxa: o fundo que detém a operação no lugar da numeração
-        v = v.drop(columns=[c for c in ["#", "Instrumento", "% do total", "Fundos"] if c in v.columns])
+        v = v.drop(columns=[c for c in ["#", "Fundos"] if c in v.columns])
         v.insert(0, "Fundo", r["Fundos"].values)
     return v
 
@@ -489,7 +489,7 @@ with t1:
     st.markdown(f'<div class="figt">Maiores operações por volume</div><div class="figs">Top {n_rank}, todas as taxas e indexadores</div>', unsafe_allow_html=True)
     rv = ops.sort_values("Volume", ascending=False).head(n_rank).reset_index(drop=True)
     rv.insert(0, "#", range(1, len(rv) + 1))
-    tabela(rank_view(rv, total, curto=COMPACTO), column_config=RANK_CFG(total, rv["Volume"].max()), height=38 + 35 * len(rv))
+    tabela(rank_view(rv, total, curto=COMPACTO, com_fundo=True), column_config=RANK_CFG(total, rv["Volume"].max()), height=38 + 35 * len(rv))
     fonte()
 
     idx_rank = [i for i in ["CDI+", "IPCA+", "%CDI", "Pré"] if (ops["Indexador"] == i).any()]
