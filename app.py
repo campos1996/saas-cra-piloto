@@ -284,7 +284,7 @@ def rank_view(r: pd.DataFrame, total: float, curto=False, com_fundo=False) -> pd
     if com_fundo:
         # rankings de taxa: o fundo que detém a operação no lugar da numeração
         v = v.drop(columns=[c for c in ["#", "Fundos"] if c in v.columns])
-        v.insert(0, "Fundo", r["Fundos"].values)
+        v.insert(1, "Fundo", r["Fundos"].values)
     return v
 
 
