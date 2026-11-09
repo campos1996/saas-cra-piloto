@@ -25,19 +25,26 @@ try:
         " corretas ('Fundo', 'Ativo', 'Valor', etc.)."
     )
   else:
-    # Tratamento de dados numéricos
+    # Tratamento de dados numéricos para Valor
     df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
 
-    # Tratamento da coluna Cupom para exibição percentual limpa
+    # Tratamento robusto da coluna Cupom (converte decimais e textos para formato percentual amigável)
     if "Cupom" in df.columns:
-      df["Cupom_Num"] = pd.to_numeric(
+      # Tenta converter para float tirando '%' e trocando vírgula por ponto
+      cupom_temp = pd.to_numeric(
           df["Cupom"].astype(str).str.replace("%", "").str.replace(",", "."),
           errors="coerce",
       ).fillna(0)
-      if df["Cupom_Num"].max() <= 1.0 and df["Cupom_Num"].max() > 0:
-        df["Cupom_Num"] = df["Cupom_Num"] * 100
+
+      # Se os valores vierem em decimal (ex: 0.038), ajusta para escala de 0 a 100
+      if cupom_temp.max() <= 1.0 and cupom_temp.max() > 0:
+        cupom_temp = cupom_temp * 100
+
+      df["Cupom_Num"] = cupom_temp
+      df["Cupom_Formatado"] = df["Cupom_Num"].apply(lambda x: f"{x:.2f}%")
     else:
       df["Cupom_Num"] = 0
+      df["Cupom_Formatado"] = "0.00%"
 
     # --- BARRA LATERAL: SELEÇÃO DE FUNDO ---
     st.sidebar.header("🔍 Filtros de Navegação")
@@ -165,6 +172,9 @@ try:
     df_exibicao["% do Fundo"] = df_exibicao["% do Fundo"].apply(
         lambda x: f"{x:.2f}%"
     )
+
+    # Substitui a coluna Cupom antiga pela formatada em percentual limpo
+    df_exibicao["Cupom"] = df_exibicao["Cupom_Formatado"]
 
     colunas_mostrar = [
         "Fundo",
