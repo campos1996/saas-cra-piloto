@@ -371,7 +371,7 @@ tem_venc = df["Vencimento"].notna().any() or df["Duration"].notna().any()
 # ---------------------------------------------------------------------------
 # Cabeçalho, indicadores e resumo
 # ---------------------------------------------------------------------------
-st.markdown(f'<div class="tg-head"><span class="tg-logo">TeraAg</span><span class="tg-sub">Monitor do crédito privado agro</span>'
+st.markdown(f'<div class="tg-head"><span class="tg-logo"/span><span class="tg-sub">Monitor do crédito privado agro</span>'
             f'<span class="tg-ref">{df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</span></div>', unsafe_allow_html=True)
 
 if df.empty:
