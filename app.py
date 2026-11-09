@@ -68,9 +68,9 @@ try:
       df_filtrado["% do Fundo"] = 0.0
 
     # Ordenação decrescente por Valor
-    df_filtrado = df_filtrado.sort_values(by="Valor", ascending=False).reset_index(
-        drop=True
-    )
+    df_filtrado = df_filtrado.sort_values(
+        by="Valor", ascending=False
+    ).reset_index(drop=True)
 
     # --- MÉTRICAS PRINCIPAIS ---
     col1, col2 = st.columns(2)
@@ -108,9 +108,10 @@ try:
 
       with rcol2:
         st.markdown("### Top 10 Menores Ativos (R$)")
-        # Filtra valores maiores que zero para evitar lixo irrelevante no menor ranking
         top_10_menores = (
-            df_filtrado[df_filtrado["Valor"] > 0].tail(10).sort_values("Valor", ascending=True)
+            df_filtrado[df_filtrado["Valor"] > 0]
+            .tail(10)
+            .sort_values("Valor", ascending=True)
         )
         fig_menores = px.bar(
             top_10_menores,
@@ -146,11 +147,40 @@ try:
           yaxis_title="",
           showlegend=False,
           margin=dict(t=20, b=20, l=20, r=20),
-          height=max(400, len(df_filtrado) * 25),  # Ajusta altura dinamicamente
+          height=max(
+              400, len(df_filtrado) * 25
+          ),  # Ajusta altura dinamicamente
       )
       st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("---")
 
     # --- TABELA INTERATIVA ORDENADA COM % DO FUNDO ---
-    st.
+    st.subheader(f"📋 Detalhamento da Carteira ({fundo_selecionado})")
+
+    df_exibicao = df_filtrado.copy()
+    df_exibicao["Valor (R$)"] = df_exibicao["Valor"].apply(
+        lambda x: f"R$ {x:,.2f}"
+    )
+    df_exibicao["% do Fundo"] = df_exibicao["% do Fundo"].apply(
+        lambda x: f"{x:.2f}%"
+    )
+
+    colunas_mostrar = [
+        "Fundo",
+        "Ativo",
+        "Codigo_Ativo",
+        "Valor (R$)",
+        "% do Fundo",
+        "Indexador",
+        "Cupom",
+    ]
+    st.dataframe(
+        df_exibicao[colunas_mostrar], use_container_width=True, hide_index=True
+    )
+
+except Exception as e:
+  st.error(
+      "⚠️ Erro ao carregar ou processar o arquivo 'carteira_ativos.xlsx'."
+      f" Detalhes técnicos: {e}"
+  )
