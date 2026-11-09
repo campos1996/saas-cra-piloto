@@ -9,7 +9,7 @@ st.write("Painel conectado à base de dados em Excel.")
 @st.cache_data
 def carregar_dados():
     # O Pandas lê o arquivo que está na mesma pasta do repositório
-    df = pd.read_excel("carteira_ativos.csv")
+    df = pd.read_csv("carteira_ativos.csv")
     return df
 
 # Tentamos carregar os dados
