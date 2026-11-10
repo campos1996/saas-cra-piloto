@@ -39,7 +39,7 @@ COMPACTO = _eh_celular()
 GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#16181B", "#8C939C", "#2F4F9A", "#16181B", "#6A6F76", "#E6E8EB", "#A32020"
 PALETA = ["#16181B", "#2F4F9A", "#9AA0A8", "#C08A2E", "#6F8FD0", "#C9CDD2", "#5A6068", "#1F3570", "#B5B9BF"]
 # Faixa do topo em cor sólida. Azul escuro: "#0F2A4A". Laranja escuro (estilo Reuters): "#C2410C".
-COR_CAPA = "#0F2A4A"
+COR_CAPA = "#C2410C"
 
 # Cores fixas: a mesma coisa tem sempre a mesma cor, em todos os gráficos
 CORES_INDEXADOR = {"CDI+": "#1F4E8C", "IPCA+": "#C2410C", "%CDI": "#6B8CC2", "Pré": "#7A7F87", "USD": "#8C6D3F", "Sem indexador": "#C9CDD2"}
