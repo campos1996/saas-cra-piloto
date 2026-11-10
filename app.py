@@ -38,8 +38,14 @@ COMPACTO = _eh_celular()
 # Identidade "revista": preto de tinta, um azul de destaque e cinzas suaves sobre branco
 GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#16181B", "#8C939C", "#2F4F9A", "#16181B", "#6A6F76", "#E6E8EB", "#A32020"
 PALETA = ["#16181B", "#2F4F9A", "#9AA0A8", "#C08A2E", "#6F8FD0", "#C9CDD2", "#5A6068", "#1F3570", "#B5B9BF"]
-FOTO_CAPA = ["capa.jpg", "capa.jpeg", "capa.png", "capa.webp", "Capa.jpg", "capa.JPG", "Capa.JPG"]   # foto do topo, na raiz do repositório
-FOTO_CREDITO = "[Crédito da foto]"
+# Faixa do topo em cor sólida. Azul escuro: "#0F2A4A". Laranja escuro (estilo Reuters): "#C2410C".
+COR_CAPA = "#0F2A4A"
+
+# Cores fixas: a mesma coisa tem sempre a mesma cor, em todos os gráficos
+CORES_INDEXADOR = {"CDI+": "#1F4E8C", "IPCA+": "#C2410C", "%CDI": "#6B8CC2", "Pré": "#7A7F87", "USD": "#8C6D3F", "Sem indexador": "#C9CDD2"}
+CORES_INSTRUMENTO = {"CRA": "#16181B", "CPR-F": "#1F4E8C", "CRI": "#6B8CC2", "Debênture": "#8C939C", "Nota comercial": "#C2410C",
+                     "CDCA": "#5A6068", "Cotas de Fiagro": "#B5B9BF", "Cotas de FIDC": "#D9A47A", "Outros": "#DADDE1"}
+PALETA_FUNDOS = ["#1F4E8C", "#C2410C", "#16181B", "#6B8CC2", "#8C939C", "#D9A47A", "#3F6E5A", "#7D5BA6", "#B5B9BF", "#A63D40"]
 
 st.markdown(
     f"""
@@ -48,13 +54,13 @@ st.markdown(
 html, body, .stApp, button, input, select, textarea {{ font-family: 'Schibsted Grotesk', 'Segoe UI', system-ui, sans-serif; }}
 .stApp {{ background: #FFFFFF; }}
 .block-container {{ padding-top: 2.4rem; max-width: 1240px; }}
-.capa img {{ display: block; width: 100%; height: 380px; object-fit: cover; }}
-.capa .cred {{ font-size: 12px; color: {MUTED}; text-align: right; padding-top: 6px; }}
-.kick {{ font-size: 14px; font-weight: 600; color: {MUTED}; display: flex; gap: 10px; margin: 44px 0 0; }}
-.kick b {{ color: {INK}; font-weight: 600; }}
-.tg-t {{ font-size: 54px; font-weight: 800; color: {INK}; line-height: 1.04; letter-spacing: -0.03em; margin: 14px 0 16px; max-width: 900px; }}
-.tg-d {{ font-family: 'Newsreader', Georgia, serif; font-size: 22px; line-height: 1.5; color: #3A3E44; max-width: 760px; margin: 0 0 10px; }}
-.tg-m {{ font-size: 13px; color: {MUTED}; margin-bottom: 40px; }}
+.capa {{ background: {COR_CAPA}; color: #FFFFFF; padding: 52px 56px 44px; margin: 0 0 36px; }}
+.kick {{ font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.72); display: flex; gap: 10px; }}
+.kick b {{ color: #FFFFFF; font-weight: 600; }}
+.tg-t {{ font-size: 54px; font-weight: 800; color: #FFFFFF; line-height: 1.04; letter-spacing: -0.03em; margin: 14px 0 16px; max-width: 900px; }}
+.tg-d {{ font-family: 'Newsreader', Georgia, serif; font-size: 22px; line-height: 1.5; color: rgba(255,255,255,0.88); max-width: 760px; margin: 0 0 18px; }}
+.tg-m {{ font-size: 13px; color: rgba(255,255,255,0.68); }}
+div[data-testid="stDownloadButton"] button {{ font-size: 12.5px; padding: 2px 12px; min-height: 30px; }}
 .kpis {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid {INK}; border-bottom: 1px solid {LINE}; margin: 4px 0 30px; }}
 .kpi {{ padding: 16px 16px 16px 0; min-width: 0; }}
 .kpi .l {{ font-size: 12.5px; color: {MUTED}; }}
@@ -73,8 +79,8 @@ div[data-testid="stTabs"] button p {{ font-size: 15px; font-weight: 500; }}
 div[data-testid="stDataFrame"] {{ border-top: 1px solid {INK}; }}
 @media (max-width: 640px) {{
   .block-container {{ padding: 2.6rem 0.9rem 2rem; }}
-  .capa img {{ height: 200px; }}
-  .kick {{ margin-top: 24px; font-size: 12.5px; }}
+  .capa {{ padding: 28px 22px 24px; margin-bottom: 24px; }}
+  .kick {{ font-size: 12.5px; }}
   .tg-t {{ font-size: 30px; }}
   .tg-d {{ font-size: 17px; }}
   .kpi {{ padding: 10px 8px 10px 0; }}
@@ -254,20 +260,6 @@ def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return df.reset_index(drop=True), mp
 
 
-def foto_capa():
-    """Procura a foto do topo na pasta do app (raiz do repositório) e devolve como imagem embutida.
-    Sem cache: assim uma foto nova enviada ao GitHub aparece na hora."""
-    import base64
-    from pathlib import Path
-    pasta = Path(__file__).resolve().parent
-    for nome in FOTO_CAPA:
-        for p in (pasta / nome, Path(nome)):
-            if p.exists():
-                ext = p.suffix.lower().lstrip(".").replace("jpg", "jpeg")
-                return f"data:image/{ext};base64," + base64.b64encode(p.read_bytes()).decode()
-    return None
-
-
 def media_pond(d: pd.DataFrame, col="Taxa"):
     x = d[d[col].notna()]
     return float((x[col] * x["Valor"]).sum() / x["Valor"].sum()) if len(x) and x["Valor"].sum() > 0 else None
@@ -343,11 +335,19 @@ def estilo(fig, altura=380, legenda=True):
     return fig
 
 
-def mostrar(fig):
+def mostrar(fig, dados: pd.DataFrame | None = None, nome: str = "grafico"):
+    """Mostra o gráfico com o botão de baixar imagem (canto superior direito) e, se houver, os dados em Excel."""
+    cfg = {"displaylogo": False, "modeBarButtons": [["toImage"]],
+           "toImageButtonOptions": {"format": "png", "filename": f"teraag_{nome}", "scale": 2}}
     try:
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(fig, width="stretch", config=cfg, key=f"g_{nome}")
     except TypeError:
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True, config=cfg, key=f"g_{nome}")
+    if dados is not None and len(dados):
+        buf = io.BytesIO()
+        dados.to_excel(buf, index=False, sheet_name="dados")
+        st.download_button("Baixar dados (Excel)", buf.getvalue(), file_name=f"teraag_{nome}.xlsx", key=f"dl_{nome}",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 def legenda_fig(n, titulo, sub=""):
@@ -426,19 +426,16 @@ if busca:
 
 tem_seg = (df["Segmento"] != "").any()
 tem_venc = df["Vencimento"].notna().any() or df["Duration"].notna().any()
+CORES_FUNDO = {f: PALETA_FUNDOS[i % len(PALETA_FUNDOS)] for i, f in enumerate(sorted(df_all["Fundo"].unique()))}
 
 # ---------------------------------------------------------------------------
 # Cabeçalho, indicadores e resumo
 # ---------------------------------------------------------------------------
-capa = foto_capa()
-if capa:
-    st.markdown(f'<div class="capa"><img src="{capa}" alt="Fachada de prédio de escritórios ao anoitecer, com janelas acesas">'
-                f'<div class="cred">{FOTO_CREDITO}</div></div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="kick"><b>Crédito agro</b><span>|</span><span>TeraAg</span></div>'
+    '<div class="capa"><div class="kick"><b>Crédito agro</b><span>|</span><span>TeraAg</span></div>'
     '<div class="tg-t">Monitor de Crédito - Taxas e Volume Financeiro</div>'
     '<p class="tg-d">Taxas, volumes e as maiores operações das carteiras de Fiagros e FIDCs, em um só lugar.</p>'
-    f'<div class="tg-m">{df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</div>', unsafe_allow_html=True)
+    f'<div class="tg-m">{df_all["Fundo"].nunique()} fundos e {len(df_all)} ativos na base</div></div>', unsafe_allow_html=True)
 
 if df.empty:
     st.info("Nenhum ativo para os filtros escolhidos.")
@@ -483,27 +480,32 @@ t1, t2, t3, t4, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Compar
 with t1:
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
-        legenda_fig(1, "Volume por fundo", "R$ milhões")
         vf = df.groupby("Fundo", as_index=False)["Valor"].sum().sort_values("Valor")
+        lider = vf.iloc[-1]
+        legenda_fig(1, f"{lider['Fundo']} reúne {num_br(lider['Valor'] / total * 100, 0)}% do volume" if len(vf) > 1 else f"{lider['Fundo']}: {brl(lider['Valor'])}",
+                    "Volume por fundo, R$ milhões")
         vf["mi"] = vf["Valor"] / 1e6
         vf["rot"] = vf.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 0)}%)", axis=1)
-        fig = px.bar(vf, x="mi", y="Fundo", orientation="h", text="rot", color_discrete_sequence=[GREEN])
+        fig = px.bar(vf, x="mi", y="Fundo", orientation="h", text="rot", color="Fundo", color_discrete_map=CORES_FUNDO)
         fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
         fig.update_xaxes(title=None, showticklabels=False, range=[0, vf["mi"].max() * 1.6])
-        fig.update_yaxes(title=None, showgrid=False)
-        mostrar(estilo(fig, max(220, 60 + 42 * len(vf)), legenda=False))
+        fig.update_yaxes(title=None, showgrid=False, categoryorder="total ascending")
+        mostrar(estilo(fig, max(220, 60 + 42 * len(vf)), legenda=False), vf[["Fundo", "Valor"]].sort_values("Valor", ascending=False), "volume_por_fundo")
         fonte()
     with c2:
-        legenda_fig(2, "Composição por instrumento", "Participação no volume de cada fundo")
         ci = df.groupby(["Fundo", "Instrumento"], as_index=False)["Valor"].sum()
+        inst_tot = ci.groupby("Instrumento")["Valor"].sum().sort_values(ascending=False)
+        legenda_fig(2, f"{inst_tot.index[0]} responde por {num_br(inst_tot.iloc[0] / total * 100, 0)}% do volume",
+                    "Composição por instrumento, participação no volume de cada fundo")
         ci["pct"] = ci["Valor"] / ci.groupby("Fundo")["Valor"].transform("sum") * 100
-        fig = px.bar(ci, x="pct", y="Fundo", color="Instrumento", orientation="h", color_discrete_sequence=PALETA,
+        fig = px.bar(ci, x="pct", y="Fundo", color="Instrumento", orientation="h", color_discrete_map=CORES_INSTRUMENTO,
+                     category_orders={"Instrumento": list(inst_tot.index)},
                      custom_data=["Instrumento", "Valor"])
         fig.update_traces(hovertemplate="%{customdata[0]}: %{x:.1f}%<extra></extra>")
         fig.update_xaxes(title=None, ticksuffix="%", range=[0, 100])
         fig.update_yaxes(title=None, showgrid=False)
         fig.update_layout(barmode="stack")
-        mostrar(estilo(fig, max(220, 90 + 42 * df["Fundo"].nunique())))
+        mostrar(estilo(fig, max(220, 90 + 42 * df["Fundo"].nunique())), ci.round({"pct": 2}).rename(columns={"pct": "% do fundo"}), "composicao_instrumento")
         fonte()
 
     # ---------------- Principais operações: rankings por volume e por taxa ----------------
@@ -532,30 +534,33 @@ with t1:
                 tabela(rank_view(rt, total, curto=True, com_fundo=True), column_config=RANK_CFG(total, max(1, base["Volume"].max()), idx=ir), height=38 + 35 * len(rt))
         fonte()
 
-        legenda_fig(3, f"Volume e taxa das operações em {ir}", "Cada ponto é uma operação; as 10 maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
         sc = base.copy()
         sc["mi"] = sc["Volume"] / 1e6
-        top = set(sc.nlargest(5 if COMPACTO else 10, "Volume")["Chave"])
+        k_top = 5 if COMPACTO else 10
+        top = set(sc.nlargest(k_top, "Volume")["Chave"])
+        acima = int((sc[sc["Chave"].isin(top)]["Taxa"] > sc["Taxa"].median()).sum())
+        legenda_fig(3, f"{acima} das {min(k_top, len(sc))} maiores operações pagam acima da mediana em {ir}",
+                    f"Volume e taxa das operações; as {k_top} maiores por volume estão identificadas. Linha tracejada: mediana da taxa")
         sc["rotulo"] = np.where(sc["Chave"].isin(top), sc["Ativo"].str.replace(r"^(CRA|CRI|CPR-F|CPR|Debênture|FIDC|FIAGRO|CDCA|NC)\s+", "", regex=True), "")
-        cores = {"CRA": GREEN, "CPR-F": GOLD, "Debênture": MID, "Nota comercial": "#4F63A0", "Cotas de Fiagro": "#9DBBA9", "Cotas de FIDC": "#8C4F3A", "Outros": "#6E7A72"}
-        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=cores, size_max=22 if COMPACTO else 40,
+        fig = px.scatter(sc, x="Taxa", y="mi", size="mi", text="rotulo", color="Instrumento", color_discrete_map=CORES_INSTRUMENTO, size_max=22 if COMPACTO else 40,
                          custom_data=["Ativo", "Fundos", "Taxa", "mi"])
         fig.update_traces(textposition="top center", textfont=dict(size=9.5 if COMPACTO else 11, color=INK), marker=dict(opacity=0.8, line=dict(width=0.5, color="white")),
                           hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Taxa: %{customdata[2]:.2f}%<br>R$ %{customdata[3]:,.1f} mi<extra></extra>")
         fig.add_vline(x=float(sc["Taxa"].median()), line=dict(color=MUTED, width=1, dash="dash"))
         fig.update_xaxes(title=f"Taxa ({ir}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#EEF0F2")
         fig.update_yaxes(title="Volume (R$ milhões)")
-        mostrar(estilo(fig, 460))
+        mostrar(estilo(fig, 460), sc[["Ativo", "Codigo", "Instrumento", "Fundos", "Taxa", "Volume"]].sort_values("Volume", ascending=False), "volume_taxa_operacoes")
         fonte()
 
     if tem_venc and df["Vencimento"].notna().any():
-        legenda_fig(4, "Vencimentos por ano", "R$ milhões")
         vv = df[df["Vencimento"].notna()].assign(Ano=lambda x: x["Vencimento"].dt.year).groupby(["Ano", "Fundo"], as_index=False)["Valor"].sum()
+        ano_top = vv.groupby("Ano")["Valor"].sum().idxmax()
+        legenda_fig(4, f"{ano_top} concentra os maiores vencimentos", "Vencimentos por ano, R$ milhões")
         vv["mi"] = vv["Valor"] / 1e6
-        fig = px.bar(vv, x="Ano", y="mi", color="Fundo", color_discrete_sequence=PALETA)
+        fig = px.bar(vv, x="Ano", y="mi", color="Fundo", color_discrete_map=CORES_FUNDO)
         fig.update_xaxes(title=None, dtick=1)
         fig.update_yaxes(title=None)
-        mostrar(estilo(fig, 320))
+        mostrar(estilo(fig, 320), vv[["Ano", "Fundo", "Valor"]], "vencimentos_por_ano")
         fonte()
 
 # ---------------------------------------------------------------------------
@@ -572,31 +577,33 @@ with t2:
 
         c1, c2 = st.columns([1.15, 1], gap="large")
         with c1:
-            legenda_fig(5, f"Taxas por fundo, {idx}", "Cada ponto é um ativo")
-            fig = px.strip(d, x="Taxa", y="Fundo", color="Fundo", color_discrete_sequence=PALETA, custom_data=["Ativo", "Valor"])
+            dsp = dispersao(d, "Fundo")
+            f_top = dsp.sort_values("Média ponderada", ascending=False).iloc[0]
+            legenda_fig(5, f"{f_top['Fundo']} tem a maior taxa média: {taxa_txt(f_top['Média ponderada'], idx)}", f"Taxas por fundo em {idx}; cada ponto é um ativo")
+            fig = px.strip(d, x="Taxa", y="Fundo", color="Fundo", color_discrete_map=CORES_FUNDO, custom_data=["Ativo", "Valor"])
             fig.update_traces(marker=dict(size=10, opacity=0.75, line=dict(width=0.5, color="white")), jitter=0.45,
                               hovertemplate="%{customdata[0]}<br>%{x:.2f}%<br>R$ %{customdata[1]:,.0f}<extra></extra>")
-            for _, r in dispersao(d, "Fundo").iterrows():
+            for _, r in dsp.iterrows():
                 fig.add_trace(go.Scatter(x=[r["Média ponderada"]], y=[r["Fundo"]], mode="markers", showlegend=False,
                                          marker=dict(symbol="line-ns", size=26, line=dict(width=3, color=INK)),
                                          hovertemplate=f"Média ponderada: {num_br(r['Média ponderada'], 2)}%<extra></extra>"))
             fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", ticksuffix="%", showgrid=True, gridcolor="#EEF0F2")
             fig.update_yaxes(title=None, showgrid=False)
-            mostrar(estilo(fig, max(260, 90 + 70 * d["Fundo"].nunique()), legenda=False))
+            mostrar(estilo(fig, max(260, 90 + 70 * d["Fundo"].nunique()), legenda=False), d[["Fundo", "Ativo", "Codigo", "Taxa", "Valor"]], f"taxas_por_fundo_{norm(idx)}")
             st.markdown('<div class="src">Traço preto: média ponderada do fundo. Fonte: carteiras informadas nos relatórios de gestão.</div>', unsafe_allow_html=True)
         with c2:
-            legenda_fig(6, "Volume por faixa de taxa", f"R$ milhões por faixa de 0,5 ponto, {idx}")
             lo, hi = np.floor(d["Taxa"].min() * 2) / 2, np.ceil(d["Taxa"].max() * 2) / 2 + 0.5
             faixas = pd.cut(d["Taxa"], bins=np.arange(lo, hi + 0.01, 0.5), right=False)
             hf = d.groupby(faixas, observed=True)["Valor"].sum().reset_index()
             hf["centro"] = hf["Taxa"].map(lambda b: (b.left + b.right) / 2)
             hf["faixa"] = hf["Taxa"].map(lambda b: f"{num_br(b.left, 1)}% a {num_br(b.right, 1)}%")
             hf["mi"] = hf["Valor"] / 1e6
-            fig = px.bar(hf, x="centro", y="mi", color_discrete_sequence=[MID], text=hf["mi"].map(lambda v: num_br(v, 0)), custom_data=["faixa"])
+            legenda_fig(6, "O maior volume está entre " + hf.loc[hf["Valor"].idxmax(), "faixa"].replace("% a ", "% e "), f"Volume por faixa de taxa, R$ milhões por faixa de 0,5 ponto, {idx}")
+            fig = px.bar(hf, x="centro", y="mi", color_discrete_sequence=[CORES_INDEXADOR.get(idx, MID)], text=hf["mi"].map(lambda v: num_br(v, 0)), custom_data=["faixa"])
             fig.update_traces(width=0.42, textposition="outside", cliponaxis=False, hovertemplate="%{customdata[0]}<br>R$ %{y:,.1f} mi<extra></extra>")
             fig.update_xaxes(title=f"Taxa ({idx}, % a.a.)", tickmode="linear", dtick=1 if COMPACTO else 0.5, ticksuffix="%", tickformat=".0f" if COMPACTO else ".1f")
             fig.update_yaxes(title=None, showticklabels=False, showgrid=False)
-            mostrar(estilo(fig, 320, legenda=False))
+            mostrar(estilo(fig, 320, legenda=False), hf[["faixa", "Valor"]].rename(columns={"faixa": "Faixa de taxa"}), f"volume_por_faixa_{norm(idx)}")
             fonte()
 
         st.markdown('<div class="h2">Dispersão das taxas, por indexador</div>', unsafe_allow_html=True)
@@ -631,9 +638,9 @@ with t2:
             legenda_fig(7, "Taxa por prazo", "Cada ponto é um ativo")
             dd = d.copy()
             dd["Prazo (anos)"] = dd["Duration"].where(dd["Duration"].notna(), (dd["Vencimento"] - pd.Timestamp.today()).dt.days / 365.25)
-            fig = px.scatter(dd, x="Prazo (anos)", y="Taxa", size="Valor", color="Fundo", color_discrete_sequence=PALETA, hover_name="Ativo", size_max=34)
+            fig = px.scatter(dd, x="Prazo (anos)", y="Taxa", size="Valor", color="Fundo", color_discrete_map=CORES_FUNDO, hover_name="Ativo", size_max=34)
             fig.update_yaxes(title=f"Taxa ({idx}, % a.a.)", ticksuffix="%")
-            mostrar(estilo(fig, 380))
+            mostrar(estilo(fig, 380), dd[["Fundo", "Ativo", "Prazo (anos)", "Taxa", "Valor"]], f"taxa_por_prazo_{norm(idx)}")
             fonte()
 
 # ---------------------------------------------------------------------------
@@ -642,9 +649,10 @@ with t2:
 with t3:
     c1, c2 = st.columns([1.2, 1], gap="large")
     with c1:
-        legenda_fig(8, "Maiores devedores", "Soma de todas as séries e fundos filtrados, R$ milhões")
         td = df.groupby("Devedor").agg(Valor=("Valor", "sum"), Fundos=("Fundo", "nunique")).sort_values("Valor", ascending=False).head(10 if COMPACTO else 15).reset_index()
         td["mi"] = td["Valor"] / 1e6
+        legenda_fig(8, f"{td.loc[0, 'Devedor']} é o maior devedor, com {num_br(td.loc[0, 'Valor'] / total * 100, 1)}% do volume",
+                    "Maiores devedores, soma de todas as séries e fundos filtrados, R$ milhões")
         td["rot"] = td.apply(lambda r: f"{num_br(r['Valor'] / total * 100, 1)}%" if COMPACTO else f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 1)}%)", axis=1)
         td["cor"] = np.where(td["Fundos"] > 1, "Em mais de um fundo", "Em um fundo")
         fig = px.bar(td.iloc[::-1], x="mi", y="Devedor", orientation="h", text="rot", color="cor",
@@ -652,12 +660,12 @@ with t3:
         fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
         fig.update_xaxes(title=None, showticklabels=False, range=[0, td["mi"].max() * 1.35])
         fig.update_yaxes(title=None, showgrid=False, categoryorder="total ascending")
-        mostrar(estilo(fig, 520))
+        mostrar(estilo(fig, 520), td[["Devedor", "Valor", "Fundos"]].rename(columns={"Fundos": "Nº de fundos"}), "maiores_devedores")
         fonte()
     with c2:
-        legenda_fig(9, "Curva de concentração", "Volume acumulado pelos devedores, do maior para o menor")
         cum = (por_dev.cumsum() / total * 100).reset_index(drop=True)
         cc = pd.DataFrame({"Devedores": np.arange(1, len(cum) + 1), "Acumulado": cum.values})
+        legenda_fig(9, f"Os 10 maiores devedores somam {num_br(top10, 0)}% do volume", "Curva de concentração: volume acumulado, do maior devedor para o menor")
         fig = px.area(cc, x="Devedores", y="Acumulado", color_discrete_sequence=[GREEN])
         fig.update_traces(line=dict(width=2), fillcolor="rgba(22,24,27,0.07)", hovertemplate="%{x} devedores: %{y:.1f}%<extra></extra>")
         for k in [5, 10]:
@@ -666,7 +674,7 @@ with t3:
                 fig.add_annotation(x=k, y=v, text=f"{k} maiores: {num_br(v, 0)}%", showarrow=True, arrowhead=0, ax=40, ay=30, font=dict(size=12, color=INK))
         fig.update_yaxes(title=None, ticksuffix="%", range=[0, 102])
         fig.update_xaxes(title="Número de devedores")
-        mostrar(estilo(fig, 520, legenda=False))
+        mostrar(estilo(fig, 520, legenda=False), cc.round({"Acumulado": 2}).rename(columns={"Acumulado": "% acumulado do volume"}), "curva_concentracao")
         fonte()
 
     st.markdown('<div class="h2">Mesmo devedor em fundos diferentes</div>', unsafe_allow_html=True)
@@ -727,12 +735,16 @@ with t4:
         "% em CRA": st.column_config.NumberColumn(format="%.0f%%"), "% em CPR-F": st.column_config.NumberColumn(format="%.0f%%"),
     })
     if len(cf) > 1 and cf["Taxa média CDI+"].notna().any():
-        legenda_fig(10, "Taxa e concentração", "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume")
-        fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_sequence=PALETA, size_max=30 if COMPACTO else 60)
+        f_tx = cf.sort_values("Taxa média CDI+", ascending=False).iloc[0]
+        f_cc = cf.sort_values("5 maiores (%)", ascending=False).iloc[0]
+        legenda_fig(10, f"{f_tx['Fundo']} paga a maior taxa média e é o mais concentrado" if f_tx["Fundo"] == f_cc["Fundo"]
+                    else f"{f_tx['Fundo']} paga a maior taxa média; {f_cc['Fundo']} é o mais concentrado",
+                    "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume")
+        fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_map=CORES_FUNDO, size_max=30 if COMPACTO else 60)
         fig.update_traces(textposition="top center", hovertemplate="%{text}<br>5 maiores: %{x:.1f}%<br>CDI + %{y:.2f}%<extra></extra>")
         fig.update_xaxes(title="Participação dos 5 maiores devedores", ticksuffix="%", showgrid=True, gridcolor="#EEF0F2")
         fig.update_yaxes(title="Taxa média (CDI + % a.a.)", ticksuffix="%")
-        mostrar(estilo(fig, 420, legenda=False))
+        mostrar(estilo(fig, 420, legenda=False), cf[["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]], "taxa_e_concentracao")
         fonte()
 
 # ---------------------------------------------------------------------------
