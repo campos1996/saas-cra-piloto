@@ -38,7 +38,7 @@ COMPACTO = _eh_celular()
 # Identidade "revista": preto de tinta, um azul de destaque e cinzas suaves sobre branco
 GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#16181B", "#8C939C", "#2F4F9A", "#16181B", "#6A6F76", "#E6E8EB", "#A32020"
 PALETA = ["#16181B", "#2F4F9A", "#9AA0A8", "#C08A2E", "#6F8FD0", "#C9CDD2", "#5A6068", "#1F3570", "#B5B9BF"]
-FOTO_CAPA = ["capa.jpg", "capa.jpeg", "capa.png", "capa.webp"]   # foto do topo, na raiz do repositório
+FOTO_CAPA = ["capa.jpg", "capa.jpeg", "capa.png", "capa.webp", "Capa.jpg", "capa.JPG", "Capa.JPG"]   # foto do topo, na raiz do repositório
 FOTO_CREDITO = "[Crédito da foto]"
 
 st.markdown(
@@ -254,16 +254,17 @@ def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return df.reset_index(drop=True), mp
 
 
-@st.cache_data(show_spinner=False)
 def foto_capa():
-    """Procura a foto do topo na raiz do repositório e devolve como imagem embutida."""
+    """Procura a foto do topo na pasta do app (raiz do repositório) e devolve como imagem embutida.
+    Sem cache: assim uma foto nova enviada ao GitHub aparece na hora."""
     import base64
-    import os
+    from pathlib import Path
+    pasta = Path(__file__).resolve().parent
     for nome in FOTO_CAPA:
-        if os.path.exists(nome):
-            ext = nome.rsplit(".", 1)[-1].replace("jpg", "jpeg")
-            with open(nome, "rb") as f:
-                return f"data:image/{ext};base64," + base64.b64encode(f.read()).decode()
+        for p in (pasta / nome, Path(nome)):
+            if p.exists():
+                ext = p.suffix.lower().lstrip(".").replace("jpg", "jpeg")
+                return f"data:image/{ext};base64," + base64.b64encode(p.read_bytes()).decode()
     return None
 
 
@@ -488,7 +489,7 @@ with t1:
         vf["rot"] = vf.apply(lambda r: f"{num_br(r['mi'], 1)}  ({num_br(r['Valor'] / total * 100, 0)}%)", axis=1)
         fig = px.bar(vf, x="mi", y="Fundo", orientation="h", text="rot", color_discrete_sequence=[GREEN])
         fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.1f} mi<extra></extra>")
-        fig.update_xaxes(title=None, showticklabels=False, range=[0, vf["mi"].max() * 1.35])
+        fig.update_xaxes(title=None, showticklabels=False, range=[0, vf["mi"].max() * 1.6])
         fig.update_yaxes(title=None, showgrid=False)
         mostrar(estilo(fig, max(220, 60 + 42 * len(vf)), legenda=False))
         fonte()
