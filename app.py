@@ -39,7 +39,7 @@ COMPACTO = _eh_celular()
 GREEN, MID, GOLD, INK, MUTED, LINE, RED = "#16181B", "#8C939C", "#2F4F9A", "#16181B", "#6A6F76", "#E6E8EB", "#A32020"
 PALETA = ["#16181B", "#2F4F9A", "#9AA0A8", "#C08A2E", "#6F8FD0", "#C9CDD2", "#5A6068", "#1F3570", "#B5B9BF"]
 # Faixa do topo em cor sólida. Azul escuro: "#0F2A4A". Laranja escuro (estilo Reuters): "#C2410C".
-COR_CAPA = "#C2410C"
+COR_CAPA = "#0F2A4A"
 
 # Cores fixas: a mesma coisa tem sempre a mesma cor, em todos os gráficos
 CORES_INDEXADOR = {"CDI+": "#1F4E8C", "IPCA+": "#C2410C", "%CDI": "#6B8CC2", "Pré": "#7A7F87", "USD": "#8C6D3F", "Sem indexador": "#C9CDD2"}
@@ -61,6 +61,15 @@ html, body, .stApp, button, input, select, textarea {{ font-family: 'Schibsted G
 .tg-d {{ font-family: 'Newsreader', Georgia, serif; font-size: 22px; line-height: 1.5; color: rgba(255,255,255,0.88); max-width: 760px; margin: 0 0 18px; }}
 .tg-m {{ font-size: 13px; color: rgba(255,255,255,0.68); }}
 div[data-testid="stDownloadButton"] button {{ font-size: 12.5px; padding: 2px 12px; min-height: 30px; }}
+.sc-id {{ font-size: 13px; color: {MUTED}; letter-spacing: 0.02em; }}
+.sc-d {{ font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: {INK}; margin: 2px 0 2px; }}
+.sc-alias {{ font-family: 'Newsreader', Georgia, serif; font-size: 15px; color: #4A5057; }}
+.sc-meta {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }}
+.bdg {{ display: inline-block; font-size: 12.5px; padding: 3px 10px; border: 1px solid {LINE}; border-radius: 999px; color: {INK}; background: #FFFFFF; }}
+.bdg.hi {{ background: #FBEAEA; border-color: #F1C9C9; color: #8E1B1B; }}
+.bdg.md {{ background: #FFF3D6; border-color: #F0DDA8; color: #7A4F00; }}
+.bdg.lo {{ background: #E5F2EA; border-color: #C5E1CF; color: #1F5A3D; }}
+.sumline {{ font-size: 14px; color: {MUTED}; margin: 6px 0 12px; }}
 .kpis {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid {INK}; border-bottom: 1px solid {LINE}; margin: 4px 0 30px; }}
 .kpi {{ padding: 16px 16px 16px 0; min-width: 0; }}
 .kpi .l {{ font-size: 12.5px; color: {MUTED}; }}
@@ -205,6 +214,8 @@ COLUNAS = {
     "duration": ["duration", "durationanos", "prazo"],
     "rating": ["rating"],
     "mes": ["mes", "mesreferencia", "data", "database", "referencia"],
+    "gestora": ["gestora", "gestor"],
+    "pct_pl": ["pl", "dopl", "pctpl", "percentualpl", "percentualdopl"],
 }
 
 
@@ -223,6 +234,45 @@ def ler_planilha(conteudo: bytes | None) -> pd.DataFrame:
     if conteudo is None:
         return pd.read_excel(ARQUIVO)
     return pd.read_excel(io.BytesIO(conteudo))
+
+
+COL_FUNDOS = {
+    "fundo": ["fundo", "ticker", "codigo"], "nome": ["nome", "nomedofundo", "razaosocial"], "gestora": ["gestora", "gestor"],
+    "base": ["database", "datadebase", "base", "mes", "referencia"], "pl": ["pl", "plrmilhoes", "plrsmilhoes", "patrimonioliquido", "patrimonioliquidors", "patrimonio"],
+    "caixa": ["caixa", "caixadopl", "caixapl", "caixa%"],
+}
+
+
+@st.cache_data(show_spinner=False)
+def ler_fundos(conteudo: bytes | None) -> pd.DataFrame:
+    """Dados de cada fundo (PL, gestora, data-base, caixa), só da aba "Fundos" da própria planilha. Sem a aba, os campos ficam em branco."""
+    bruto = None
+    try:
+        bruto = pd.read_excel(io.BytesIO(conteudo) if conteudo else ARQUIVO, sheet_name="Fundos")
+    except Exception:
+        bruto = None
+    if bruto is None or bruto.empty:
+        return pd.DataFrame()
+    mp = {}
+    for campo, chaves in COL_FUNDOS.items():
+        for c in bruto.columns:
+            if norm(c) in chaves and c not in mp.values():
+                mp[campo] = c
+                break
+    if "fundo" not in mp or "pl" not in mp:
+        return pd.DataFrame()
+    f = pd.DataFrame({"Fundo": bruto[mp["fundo"]].astype(str).str.strip()})
+    f["Nome"] = bruto[mp["nome"]].astype(str).replace({"nan": ""}) if "nome" in mp else ""
+    f["Gestora"] = bruto[mp["gestora"]].astype(str).replace({"nan": ""}) if "gestora" in mp else ""
+    f["Base"] = bruto[mp["base"]].astype(str).replace({"nan": ""}) if "base" in mp else ""
+    pl = bruto[mp["pl"]].map(para_numero)
+    # PL informado em R$ milhões (ex.: 2.164,5) ou em reais: abaixo de 1 milhão, considera milhões
+    f["PL"] = np.where(pl < 1e6, pl * 1e6, pl)
+    cx = bruto[mp["caixa"]].map(para_numero) if "caixa" in mp else pd.Series(np.nan, index=bruto.index)
+    if cx.notna().any() and cx.dropna().abs().median() < 1:
+        cx = cx * 100
+    f["Caixa"] = cx
+    return f[f["Fundo"].str.len() > 0].drop_duplicates("Fundo").reset_index(drop=True)
 
 
 def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
@@ -255,6 +305,11 @@ def preparar(bruto: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df["Duration"] = bruto[mp["duration"]].map(para_numero) if "duration" in mp else np.nan
     df["Rating"] = bruto[mp["rating"]].astype(str).replace({"nan": ""}) if "rating" in mp else ""
     df["Mes"] = bruto[mp["mes"]].astype(str).str[:7] if "mes" in mp else ""
+    df["Gestora"] = bruto[mp["gestora"]].astype(str).str.strip().replace({"nan": ""}) if "gestora" in mp else ""
+    pp = bruto[mp["pct_pl"]].map(para_numero) if "pct_pl" in mp else pd.Series(np.nan, index=bruto.index)
+    if pp.notna().any() and pp.dropna().abs().median() < 0.5:
+        pp = pp * 100
+    df["PctPL"] = pp
     df = df[(df["Ativo"] != "") & (df["Ativo"].str.lower() != "nan") & df["Valor"].notna() & (df["Valor"] > 0)]
     df = df[~df["Ativo"].map(norm).str.startswith(("total", "caixa", "patrimonio", "rendimentos"))]
     return df.reset_index(drop=True), mp
@@ -381,6 +436,7 @@ with st.sidebar:
 
 try:
     df_all, mapa = preparar(ler_planilha(conteudo))
+    fundos_info = ler_fundos(conteudo)
 except FileNotFoundError:
     st.error(f"Não encontrei o arquivo {ARQUIVO} no repositório. Confira o nome do arquivo ou envie a planilha pela barra lateral.")
     st.stop()
@@ -412,6 +468,8 @@ with st.sidebar:
     st.markdown("---")
     with st.expander("Como enriquecer a planilha"):
         st.markdown(
+            "**Fundos:** para preencher patrimônio líquido, gestora e data-base, crie no **carteira_ativos.xlsx** uma aba chamada **Fundos** "
+            "com as colunas **Fundo, Gestora, Data-base** e **PL** (em reais ou em R$ milhões). Enquanto a aba não existir, esses campos ficam em branco.\n\n"
             "Além de **Fundo, Ativo, Codigo_Ativo, Valor, Indexador e Cupom**, o painel usa, se existirem, as colunas "
             "**Segmento** (produtor, cooperativa, distribuidora…), **Vencimento**, **Duration**, **Rating** e **Mes** "
             "(mês de referência da carteira, AAAA-MM). Com elas aparecem as análises por setor, por prazo e a evolução mensal."
@@ -426,7 +484,13 @@ if busca:
 
 tem_seg = (df["Segmento"] != "").any()
 tem_venc = df["Vencimento"].notna().any() or df["Duration"].notna().any()
-CORES_FUNDO = {f: PALETA_FUNDOS[i % len(PALETA_FUNDOS)] for i, f in enumerate(sorted(df_all["Fundo"].unique()))}
+_todos_fundos = sorted(df_all["Fundo"].unique())
+CORES_FUNDO = {f: PALETA_FUNDOS[i % len(PALETA_FUNDOS)] for i, f in enumerate(_todos_fundos)}
+GESTORA = dict(zip(fundos_info["Fundo"], fundos_info["Gestora"])) if len(fundos_info) else {}
+for _f, _g in df_all[df_all["Gestora"] != ""].groupby("Fundo")["Gestora"].first().items():
+    GESTORA.setdefault(_f, _g)
+BASE = dict(zip(fundos_info["Fundo"], fundos_info["Base"])) if len(fundos_info) else {}
+PL_FUNDO = dict(zip(fundos_info["Fundo"], fundos_info["PL"])) if len(fundos_info) else {}
 
 # ---------------------------------------------------------------------------
 # Cabeçalho, indicadores e resumo
@@ -472,7 +536,7 @@ st.markdown(f'<p class="lead">{" ".join(frases)}</p>', unsafe_allow_html=True)
 if COMPACTO:
     st.caption("Filtros de fundo, indexador e instrumento ficam no menu (seta › no canto superior esquerdo).")
 
-t1, t2, t3, t4, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Comparar fundos", "Carteira"])
+t1, t2, t3, t4, tpq, t5 = st.tabs(["Visão geral", "Taxas", "Concentração", "Fundos", "Pesquisa", "Carteira"])
 
 # ---------------------------------------------------------------------------
 # Visão geral
@@ -706,46 +770,211 @@ with t3:
         st.markdown('<p class="note">Diferenças de taxa para o mesmo devedor costumam refletir séries, datas de aquisição ou garantias diferentes. Vale olhar caso a caso.</p>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Comparar fundos
+# Fundos (comparação, patrimônio líquido e gestoras)
 # ---------------------------------------------------------------------------
 with t4:
+    tem_pl = bool(PL_FUNDO)
+    tem_gestora = any(GESTORA.get(f) for f in df["Fundo"].unique())
     linhas = []
     for f, x in df.groupby("Fundo"):
         dv = x.groupby("Devedor")["Valor"].sum().sort_values(ascending=False)
         tot = x["Valor"].sum()
         xc = x[x["Indexador"] == "CDI+"]
-        linhas.append({"Fundo": f, "Volume": tot, "Ativos": len(x), "Devedores": len(dv), "Taxa média CDI+": media_pond(xc),
-                       "Mediana CDI+": xc["Taxa"].median() if len(xc) else None, "Maior devedor": dv.index[0],
+        pl_f = PL_FUNDO.get(f)
+        linhas.append({"Fundo": f, "Gestora": GESTORA.get(f, ""), "Data-base": BASE.get(f, "") or (x["Mes"].iloc[0] if x["Mes"].iloc[0] else ""),
+                       "PL": pl_f if pl_f else np.nan, "Volume": tot, "% do PL em crédito": tot / pl_f * 100 if pl_f else np.nan,
+                       "Ativos": len(x), "Devedores": len(dv), "Taxa média CDI+": media_pond(xc),
+                       "Mediana CDI+": xc["Taxa"].median() if len(xc) else np.nan, "Maior devedor": dv.index[0],
                        "Maior devedor (%)": dv.iloc[0] / tot * 100, "5 maiores (%)": dv.head(5).sum() / tot * 100, "HHI": hhi(dv),
                        "% em CRA": x.loc[x["Instrumento"] == "CRA", "Valor"].sum() / tot * 100,
                        "% em CPR-F": x.loc[x["Instrumento"] == "CPR-F", "Valor"].sum() / tot * 100})
-    cf = pd.DataFrame(linhas).sort_values("Volume", ascending=False)
-    cf = cf.astype({"Taxa média CDI+": float, "Mediana CDI+": float}).round({"Volume": 0, "Taxa média CDI+": 2, "Mediana CDI+": 2, "Maior devedor (%)": 1, "5 maiores (%)": 1, "HHI": 0, "% em CRA": 0, "% em CPR-F": 0})
-    cf_v = cf.copy()
-    cf_v["Volume"] = (cf_v["Volume"] / 1e3).round(0)
-    if COMPACTO:
-        cf_v = cf_v[["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]]
-    tabela(cf_v, column_config={
-        "Volume": st.column_config.NumberColumn("Volume (R$ mil)", format="localized"),
-        "Taxa média CDI+": st.column_config.NumberColumn("Taxa média (CDI + %)", format="localized"),
-        "Mediana CDI+": st.column_config.NumberColumn("Mediana (CDI + %)", format="localized"),
-        "Maior devedor (%)": st.column_config.NumberColumn(format="%.1f%%"),
-        "5 maiores (%)": st.column_config.NumberColumn("5 maiores devedores", format="%.1f%%"),
-        "HHI": st.column_config.NumberColumn("HHI", format="localized", help="Índice Herfindahl-Hirschman por devedor: acima de 1.500 indica concentração moderada; acima de 2.500, alta."),
-        "% em CRA": st.column_config.NumberColumn(format="%.0f%%"), "% em CPR-F": st.column_config.NumberColumn(format="%.0f%%"),
-    })
+    cf = pd.DataFrame(linhas).astype({"PL": float, "% do PL em crédito": float, "Taxa média CDI+": float, "Mediana CDI+": float})
+    cf = cf.sort_values("Volume", ascending=False).reset_index(drop=True)
+    vol_tot = cf["Volume"].sum()
+    cf["% do volume"] = cf["Volume"] / vol_tot * 100
+
+    # indicadores: PL e gestoras só aparecem quando informados na aba Fundos
+    pl_sum = cf["PL"].sum() if tem_pl else None
+    kp = [("Volume em carteira", brl(vol_tot), f"{len(cf)} fundo(s)"),
+          ("Maior carteira", cf.loc[0, "Fundo"], f"{brl(cf.loc[0, 'Volume'])}, {num_br(cf.loc[0, '% do volume'], 0)}% do volume"),
+          ("5 maiores carteiras", f"{num_br(cf['Volume'].head(5).sum() / vol_tot * 100, 0)}%", "do volume filtrado"),
+          ("PL somado", brl(pl_sum) if tem_pl else "—", "dos fundos com PL informado" if tem_pl else "a preencher na aba Fundos"),
+          ("% do PL em crédito", f"{num_br(cf.loc[cf['PL'].notna(), 'Volume'].sum() / pl_sum * 100, 0)}%" if tem_pl and pl_sum else "—",
+           "volume em carteira ÷ PL" if tem_pl else "depende do PL"),
+          ("Gestoras", str(len({g for g in cf["Gestora"] if g})) if tem_gestora else "—", "na base filtrada" if tem_gestora else "a preencher na aba Fundos")]
+    st.markdown('<div class="kpis">' + "".join(f'<div class="kpi"><div class="l">{l}</div><div class="v">{v}</div><div class="n">{n}</div></div>' for l, v, n in kp) + "</div>",
+                unsafe_allow_html=True)
+    if not tem_pl:
+        st.markdown('<p class="note">Patrimônio líquido, gestora e data-base ficam em branco até serem preenchidos na planilha, '
+                    'numa aba chamada <b>Fundos</b>. Veja como em "Como enriquecer a planilha", na barra lateral.</p>', unsafe_allow_html=True)
+
+    cA, cB = st.columns([1, 2], vertical_alignment="bottom")
+    opcoes = ["Por fundo", "Por gestora"] if tem_gestora else ["Por fundo"]
+    visao = cA.radio("Agrupar", opcoes, horizontal=True, label_visibility="collapsed", key="f_visao")
+    qf = norm(cB.text_input("Filtrar fundo ou gestora", placeholder="Filtrar fundo ou gestora", label_visibility="collapsed", key="f_q"))
+
+    if visao == "Por fundo":
+        tv = cf if not qf else cf[cf["Fundo"].map(norm).str.contains(qf) | cf["Gestora"].map(norm).str.contains(qf)]
+        st.markdown(f'<div class="sumline">{len(tv)} fundo(s) · {brl(tv["Volume"].sum())} em carteira</div>', unsafe_allow_html=True)
+        tv_v = tv.copy()
+        tv_v["PL"] = (tv_v["PL"] / 1e3).round(0)
+        tv_v["Volume"] = (tv_v["Volume"] / 1e3).round(0)
+        tv_v = tv_v.round({"% do volume": 1, "% do PL em crédito": 1, "Taxa média CDI+": 2, "Mediana CDI+": 2, "Maior devedor (%)": 1, "5 maiores (%)": 1, "HHI": 0, "% em CRA": 0, "% em CPR-F": 0})
+        tv_v["Gestora"] = tv_v["Gestora"].replace("", "—")
+        tv_v["Data-base"] = tv_v["Data-base"].replace("", "—")
+        if COMPACTO:
+            cols = ["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]
+        else:
+            cols = ["Fundo", "Gestora", "Data-base", "PL", "Volume", "% do volume", "% do PL em crédito", "Ativos", "Devedores",
+                    "Taxa média CDI+", "Mediana CDI+", "Maior devedor", "Maior devedor (%)", "5 maiores (%)", "HHI", "% em CRA", "% em CPR-F"]
+        cfg = {"PL": st.column_config.NumberColumn("PL (R$ mil)", format="localized", help="Preenchido pela aba Fundos da planilha."),
+               "Volume": st.column_config.NumberColumn("Volume em carteira (R$ mil)", format="localized"),
+               "% do volume": st.column_config.NumberColumn(format="%.1f%%"),
+               "% do PL em crédito": st.column_config.NumberColumn(format="%.1f%%", help="Volume em carteira dividido pelo PL."),
+               "Taxa média CDI+": st.column_config.NumberColumn("Taxa média (CDI + %)", format="localized"),
+               "Mediana CDI+": st.column_config.NumberColumn("Mediana (CDI + %)", format="localized"),
+               "Maior devedor (%)": st.column_config.NumberColumn(format="%.1f%%"),
+               "5 maiores (%)": st.column_config.NumberColumn("5 maiores devedores", format="%.1f%%"),
+               "HHI": st.column_config.NumberColumn("HHI", format="localized", help="Índice Herfindahl-Hirschman por devedor: acima de 1.500 indica concentração moderada; acima de 2.500, alta."),
+               "% em CRA": st.column_config.NumberColumn(format="%.0f%%"), "% em CPR-F": st.column_config.NumberColumn(format="%.0f%%")}
+        sel = None
+        try:
+            ev = st.dataframe(tv_v[cols], hide_index=True, width="stretch", column_config=cfg, on_select="rerun",
+                              selection_mode="single-row", key="f_tab", height=min(38 + 35 * len(tv_v), 560))
+            linhas_sel = ev.selection.rows if ev and ev.selection else []
+            sel = tv_v.iloc[linhas_sel[0]]["Fundo"] if linhas_sel else None
+        except TypeError:
+            tabela(tv_v[cols], column_config=cfg)
+        st.markdown('<div class="src">Clique numa linha para ver a carteira do fundo. Clique no nome de uma coluna para ordenar.</div>', unsafe_allow_html=True)
+        if sel:
+            cx = df[df["Fundo"] == sel].sort_values("Valor", ascending=False).copy()
+            sub = f'{len(cx)} ativos, {brl(cx["Valor"].sum())} em carteira' + (f', {num_br(cx["Valor"].sum() / PL_FUNDO[sel] * 100, 1)}% do PL' if PL_FUNDO.get(sel) else "")
+            st.markdown(f'<div class="figt" style="margin-top:18px">Carteira do {sel}</div><div class="figs">{sub}</div>', unsafe_allow_html=True)
+            cx["Taxa"] = [taxa_txt(t, i) for t, i in zip(cx["Taxa"], cx["Indexador"])]
+            cx["% da carteira"] = (cx["Valor"] / cx["Valor"].sum() * 100).round(2)
+            cx["Valor"] = (cx["Valor"] / 1e3).round(0)
+            tabela(cx[["Ativo", "Codigo", "Instrumento", "Taxa", "Valor", "% da carteira"]], column_config={
+                "Codigo": st.column_config.TextColumn("Código"), "Valor": st.column_config.NumberColumn("Valor (R$ mil)", format="localized"),
+                "% da carteira": st.column_config.NumberColumn(format="%.2f%%")})
+    else:
+        gg = cf[cf["Gestora"] != ""].groupby("Gestora").agg(Fundos=("Fundo", "count"), Lista=("Fundo", lambda v: ", ".join(v)),
+                                                             PL=("PL", "sum"), Volume=("Volume", "sum"), Ativos=("Ativos", "sum")).reset_index()
+        gg["% do volume"] = gg["Volume"] / vol_tot * 100
+        gg = gg.sort_values("Volume", ascending=False)
+        if qf:
+            gg = gg[gg["Gestora"].map(norm).str.contains(qf) | gg["Lista"].map(norm).str.contains(qf)]
+        st.markdown(f'<div class="sumline">{len(gg)} gestora(s) · {brl(gg["Volume"].sum())} em carteira</div>', unsafe_allow_html=True)
+        gg["PL"] = (gg["PL"].replace(0, np.nan) / 1e3).round(0)
+        gg["Volume"] = (gg["Volume"] / 1e3).round(0)
+        gg = gg.round({"% do volume": 1})
+        cols = ["Gestora", "Fundos", "Volume"] if COMPACTO else ["Gestora", "Fundos", "Lista", "PL", "Volume", "% do volume", "Ativos"]
+        tabela(gg[cols], column_config={"Lista": st.column_config.TextColumn("Fundos da gestora"),
+                                        "PL": st.column_config.NumberColumn("PL (R$ mil)", format="localized"),
+                                        "Volume": st.column_config.NumberColumn("Volume em carteira (R$ mil)", format="localized"),
+                                        "% do volume": st.column_config.NumberColumn(format="%.1f%%")})
+
+    if tem_pl and cf["PL"].notna().any():
+        gp = cf[cf["PL"].notna()].sort_values("PL", ascending=False).head(10 if COMPACTO else 15).copy()
+        gp["mi"] = gp["PL"] / 1e6
+        legenda_fig(11, f"{gp.iloc[0]['Fundo']} tem o maior patrimônio líquido: {brl(gp.iloc[0]['PL'])}", "Patrimônio líquido por fundo, R$ milhões")
+        fig = px.bar(gp, x="mi", y="Fundo", orientation="h", color="Fundo", color_discrete_map=CORES_FUNDO,
+                     text=gp["mi"].map(lambda v: num_br(v, 0)))
+        fig.update_traces(textposition="outside", cliponaxis=False, hovertemplate="%{y}<br>R$ %{x:,.0f} mi<extra></extra>")
+        fig.update_xaxes(title=None, showticklabels=False, range=[0, gp["mi"].max() * 1.3])
+        fig.update_yaxes(title=None, showgrid=False, categoryorder="total ascending")
+        mostrar(estilo(fig, max(240, 60 + 34 * len(gp)), legenda=False), gp[["Fundo", "Gestora", "Data-base", "PL"]], "patrimonio_liquido")
+        fonte("aba Fundos da planilha.")
+
     if len(cf) > 1 and cf["Taxa média CDI+"].notna().any():
         f_tx = cf.sort_values("Taxa média CDI+", ascending=False).iloc[0]
         f_cc = cf.sort_values("5 maiores (%)", ascending=False).iloc[0]
         legenda_fig(10, f"{f_tx['Fundo']} paga a maior taxa média e é o mais concentrado" if f_tx["Fundo"] == f_cc["Fundo"]
                     else f"{f_tx['Fundo']} paga a maior taxa média; {f_cc['Fundo']} é o mais concentrado",
-                    "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume")
+                    "Taxa média em CDI+ contra a participação dos 5 maiores devedores; tamanho pelo volume em carteira")
         fig = px.scatter(cf, x="5 maiores (%)", y="Taxa média CDI+", size="Volume", text="Fundo", color="Fundo", color_discrete_map=CORES_FUNDO, size_max=30 if COMPACTO else 60)
         fig.update_traces(textposition="top center", hovertemplate="%{text}<br>5 maiores: %{x:.1f}%<br>CDI + %{y:.2f}%<extra></extra>")
         fig.update_xaxes(title="Participação dos 5 maiores devedores", ticksuffix="%", showgrid=True, gridcolor="#EEF0F2")
         fig.update_yaxes(title="Taxa média (CDI + % a.a.)", ticksuffix="%")
         mostrar(estilo(fig, 420, legenda=False), cf[["Fundo", "Volume", "Taxa média CDI+", "5 maiores (%)"]], "taxa_e_concentracao")
         fonte()
+
+# ---------------------------------------------------------------------------
+# Pesquisa de operações (mesmo modelo de "operação" dos rankings)
+# ---------------------------------------------------------------------------
+def _sugerir(v):
+    st.session_state["busca_ativo"] = v
+
+
+with tpq:
+    st.markdown('<p class="note">Busque por código ou pelo nome do devedor. Cada resultado é uma operação, como nos rankings: '
+                'o mesmo ativo reunido em todos os fundos filtrados que o detêm.</p>', unsafe_allow_html=True)
+    q = st.text_input("Pesquisar", placeholder="Ex.: nome do devedor ou código do ativo", key="busca_ativo", label_visibility="collapsed")
+    ops_all = operacoes(df)
+    # exemplos tirados da própria base: operações presentes em mais fundos
+    sug = ops_all[ops_all["Nº fundos"] > 1].sort_values(["Nº fundos", "Volume"], ascending=False)["Devedor"].drop_duplicates().head(4 if COMPACTO else 6).tolist()
+    if sug:
+        cs = st.columns(len(sug) + 1)
+        cs[0].markdown('<div class="sumline" style="margin-top:8px">Em mais fundos:</div>', unsafe_allow_html=True)
+        for c, v in zip(cs[1:], sug):
+            try:
+                c.button(v, key=f"sug_{norm(v)}", on_click=_sugerir, args=(v,), width="stretch")
+            except TypeError:
+                c.button(v, key=f"sug_{norm(v)}", on_click=_sugerir, args=(v,))
+
+    qn = norm(q.strip())
+    if len(qn) < 2:
+        st.markdown('<p class="note">Digite pelo menos 2 caracteres.</p>', unsafe_allow_html=True)
+    else:
+        x = df.copy()
+        x["Chave"] = np.where(x["Codigo"].astype(str).str.len() > 3, x["Codigo"].astype(str).str.upper(), x["Ativo"].map(norm))
+        achou = x["Ativo"].map(norm).str.contains(qn, regex=False) | x["Devedor"].map(norm).str.contains(qn, regex=False) | x["Codigo"].map(norm).str.contains(qn, regex=False)
+        chaves = set(x.loc[achou, "Chave"])
+        res = ops_all[ops_all["Chave"].isin(chaves)].sort_values(["Nº fundos", "Volume"], ascending=False)
+        if res.empty:
+            st.markdown(f'<p class="note">Nenhuma operação encontrada para “{q.strip()}” nos fundos filtrados.</p>', unsafe_allow_html=True)
+        else:
+            linhas_q = x[x["Chave"].isin(chaves)]
+            st.markdown(f'<div class="sumline">{len(res)} operação(ões) · em {linhas_q["Fundo"].nunique()} fundo(s) · {brl(res["Volume"].sum())} somados</div>', unsafe_allow_html=True)
+            limite = 20
+            for _, op in res.head(limite).iterrows():
+                a = linhas_q[linhas_q["Chave"] == op["Chave"]].sort_values("Valor", ascending=False)
+                nomes = list(dict.fromkeys(a["Ativo"]))
+                nf = int(op["Nº fundos"])
+                badges = [f'<span class="bdg">{op["Indexador"]}</span>', f'<span class="bdg">{op["Instrumento"]}</span>',
+                          f'<span class="bdg">{nf} fundo{"s" if nf > 1 else ""}</span>',
+                          f'<span class="bdg">{taxa_txt(op["Taxa"], op["Indexador"])} média</span>' if pd.notna(op["Taxa"]) else ""]
+                tx = a.loc[a["Indexador"] == op["Indexador"], "Taxa"].dropna()
+                if nf > 1 and len(tx) > 1:
+                    bps = (tx.max() - tx.min()) * 100
+                    cls = "hi" if bps >= 200 else ("md" if bps >= 50 else "lo")
+                    badges.append(f'<span class="bdg {cls}">{num_br(bps, 0)} bps entre fundos</span>')
+                with st.container(border=True):
+                    st.markdown(f'<div class="sc-id">{op["Codigo"] if len(str(op["Codigo"])) > 3 else "Sem código na planilha"}</div>'
+                                f'<div class="sc-d">{nomes[0]}</div>'
+                                + (f'<div class="sc-alias">Também na planilha como: {", ".join(nomes[1:])}</div>' if len(nomes) > 1 else "")
+                                + f'<div class="sc-meta">{"".join(badges)}</div>', unsafe_allow_html=True)
+                    tb = pd.DataFrame({"Fundo": a["Fundo"].values})
+                    if any(GESTORA.get(f) for f in a["Fundo"]):
+                        tb["Gestora"] = [GESTORA.get(f, "") or "—" for f in a["Fundo"]]
+                    tb["Taxa"] = [taxa_txt(t, i) for t, i in zip(a["Taxa"], a["Indexador"])]
+                    if a["Vencimento"].notna().any():
+                        tb["Vencimento"] = a["Vencimento"].dt.strftime("%d/%m/%Y").fillna("—").values
+                    tb["Valor"] = (a["Valor"] / 1e3).round(0).values
+                    tb["% da carteira do fundo"] = [round(v / df.loc[df["Fundo"] == f, "Valor"].sum() * 100, 2) for v, f in zip(a["Valor"], a["Fundo"])]
+                    pct_pl = [(p if pd.notna(p) else (v / PL_FUNDO[f] * 100 if PL_FUNDO.get(f) else np.nan)) for p, v, f in zip(a["PctPL"], a["Valor"], a["Fundo"])]
+                    if any(pd.notna(p) for p in pct_pl):
+                        tb["% do PL"] = np.round(pct_pl, 2)
+                    if a["Mes"].astype(str).str.len().gt(0).any():
+                        tb["Mês"] = a["Mes"].values
+                    if COMPACTO:
+                        tb = tb[["Fundo", "Taxa", "Valor"]]
+                    tabela(tb, column_config={"Valor": st.column_config.NumberColumn("Valor (R$ mil)", format="localized"),
+                                              "% da carteira do fundo": st.column_config.NumberColumn(format="%.2f%%"),
+                                              "% do PL": st.column_config.NumberColumn(format="%.2f%%")})
+            if len(res) > limite:
+                st.markdown(f'<p class="note">Mostrando as {limite} maiores de {len(res)} operações. Refine a busca para ver as demais.</p>', unsafe_allow_html=True)
+            st.markdown('<div class="src">Diferença de taxa entre fundos, no mesmo indexador: 200 bps ou mais em vermelho, de 50 a 199 bps em amarelo, abaixo de 50 bps em verde. '
+                        'Fonte: carteiras informadas nos relatórios de gestão dos fundos.</div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Carteira
